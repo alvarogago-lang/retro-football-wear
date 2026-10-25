@@ -1,0 +1,4 @@
+supabase/seed.sql
+node_modules/
+.DS_Store
+Thumbs.db

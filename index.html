@@ -1,0 +1,1333 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14213d">
+<meta name="description" content="Pide tu ropa de fútbol retro: camisetas, pantalones y chaquetas.">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Retro FW">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Retro Football Wear</title>
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: { brand: { 50:'#eef1f8',100:'#dbe2f0',500:'#2b3f6b',600:'#14213d',700:'#0b1428' }, gold: { 400:'#f0c53d',500:'#e8b624',700:'#b8860b' }, cream: { 100:'#f3ead8',200:'#e8dcc0' } } } } };
+</script>
+<style>
+  body { background:#faf8f3; }
+  .fade-in { animation: fade .18s ease-out; }
+  @keyframes fade { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform:none; } }
+  .scroll-thin::-webkit-scrollbar { height:6px; width:6px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px; }
+  .aspect-tee { aspect-ratio: 4 / 5; }
+  html { -webkit-tap-highlight-color: transparent; }
+  @media (max-width: 639px) { input, select, textarea { font-size: 16px !important; } } /* evita el zoom automático de iOS */
+  @media (display-mode: standalone) { body { overscroll-behavior-y: none; } }
+</style>
+</head>
+<body class="min-h-screen text-slate-800 antialiased">
+<div id="app"></div>
+<div id="modal-root"></div>
+<div id="toast-root" class="fixed bottom-24 sm:bottom-4 inset-x-0 flex flex-col items-center gap-2 z-[60] pointer-events-none px-4"></div>
+
+<script>
+/* =========================================================================
+   Retro Football Wear — pedidos de ropa de fútbol retro. App autocontenida.
+   Datos, inicio de sesión y fotos en Supabase; publicada en GitHub Pages.
+   ========================================================================= */
+const SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL'];
+
+// ---------- utilidades ----------
+const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+const money = (n) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: db.settings.currency || 'EUR' }).format(n || 0);
+const units = (items) => SIZES.reduce((a, s) => a + (items?.[s] || 0), 0);
+
+function teeSvg(fill, ink, label) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 1000'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#f1f5f9'/><stop offset='1' stop-color='#dbe2ea'/></linearGradient><linearGradient id='sh' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#000' stop-opacity='.10'/><stop offset='.5' stop-color='#000' stop-opacity='0'/><stop offset='1' stop-color='#000' stop-opacity='.12'/></linearGradient></defs><rect width='800' height='1000' fill='url(#bg)'/><ellipse cx='400' cy='900' rx='230' ry='22' fill='#000' opacity='.08'/><path d='M275 170 L195 195 L80 300 L155 425 L220 385 L220 870 L580 870 L580 385 L645 425 L720 300 L605 195 L525 170 Q400 255 275 170Z' fill='${fill}' stroke='${ink}' stroke-opacity='.35' stroke-width='5' stroke-linejoin='round'/><path d='M220 385 L220 870 L580 870 L580 385' fill='url(#sh)'/><path d='M275 170 Q400 255 525 170' fill='none' stroke='${ink}' stroke-opacity='.45' stroke-width='12'/><text x='400' y='540' font-family='Helvetica,Arial' font-weight='800' font-size='56' letter-spacing='4' text-anchor='middle' fill='${ink}'>${label}</text></svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+const fallbackFor = (m) => teeSvg(m?.color || '#cbd5e1', m?.ink || '#334155', 'TEE');
+const imgTag = (src, m, cls = '') =>
+  `<img src="${esc(src)}" alt="${esc(m?.name || '')}" class="${cls}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackFor(m)}'">`;
+
+// ---------- datos en Supabase ----------
+// Cada entidad se guarda tal cual en la columna jsonb "data" de su tabla; las reglas de seguridad (RLS)
+// deciden qué puede leer y escribir cada usuario. Ver supabase/schema.sql.
+const SB_URL = 'https://jyqdglmhsbuzvivxmdkp.supabase.co';
+const SB_KEY = 'sb_publishable_BRVEWF8vro8wpiT3xhVQWg_40i4Hjpc'; // clave pública: segura en el navegador gracias a RLS
+const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+const TABLES = ['categories', 'models', 'orders', 'payments', 'notifications', 'emails'];
+
+// Preferencias de este dispositivo (aviso de instalación); si el navegador bloquea el almacenamiento, en memoria.
+function safeStore(kind) {
+  try { const s = window[kind]; s.getItem('x'); return s; }
+  catch { const m = {}; return { getItem: k => m[k] ?? null, setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; }
+}
+const store = safeStore('localStorage');
+
+const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], payments: [], notifications: [], emails: [],
+  settings: { currency: 'EUR', maxUnits: 5, paypalClientId: '', alertEmail: true, alertNotif: true } });
+let db = emptyDb();
+let synced = {}; // copia de lo último leído/escrito en la nube, para enviar solo los cambios
+
+const profileToUser = (p) => ({ id: p.id, name: p.name, username: p.username, email: p.email, role: p.role, active: p.active, createdAt: p.created_at });
+
+async function fetchAll() {
+  const [pr, st, ...rest] = await Promise.all([
+    sb.from('profiles').select('*'),
+    sb.from('settings').select('data').eq('id', 1).maybeSingle(),
+    ...TABLES.map(t => sb.from(t).select('id,data')),
+  ]);
+  const bad = [pr, st, ...rest].find(r => r.error);
+  if (bad) throw bad.error;
+  const next = emptyDb();
+  next.users = pr.data.map(profileToUser);
+  if (st.data) Object.assign(next.settings, st.data.data);
+  TABLES.forEach((t, i) => { next[t] = rest[i].data.map(r => r.data); });
+  db = next;
+  synced = Object.fromEntries(TABLES.map(t => [t, new Map(db[t].map(r => [r.id, JSON.stringify(r)]))]));
+  synced.settings = JSON.stringify(db.settings);
+}
+
+// La interfaz modifica `db` y llama a save(): aquí se calculan las diferencias y se envían en orden.
+let syncChain = Promise.resolve();
+function save() {
+  syncChain = syncChain.then(pushChanges).catch(async (e) => {
+    console.error(e);
+    toast('No se pudo guardar: ' + (e.message || e), 'error');
+    try { await fetchAll(); } catch {}
+    render();
+  });
+  return true;
+}
+async function pushChanges() {
+  for (const t of TABLES) {
+    const prev = synced[t], cur = new Map(db[t].map(r => [r.id, r]));
+    const added = [...cur.values()].filter(r => !prev.has(r.id));
+    const changed = [...cur.values()].filter(r => prev.has(r.id) && prev.get(r.id) !== JSON.stringify(r));
+    const removed = [...prev.keys()].filter(id => !cur.has(id));
+    if (added.length) {
+      const { error } = await sb.from(t).insert(added.map(r => ({ id: r.id, data: r })));
+      if (error) throw error;
+      added.forEach(r => prev.set(r.id, JSON.stringify(r)));
+    }
+    for (const r of changed) {
+      const { error } = await sb.from(t).update({ data: r }).eq('id', r.id);
+      if (error) throw error;
+      prev.set(r.id, JSON.stringify(r));
+    }
+    if (removed.length) {
+      const { error } = await sb.from(t).delete().in('id', removed);
+      if (error) throw error;
+      removed.forEach(id => prev.delete(id));
+    }
+  }
+  const s = JSON.stringify(db.settings);
+  if (s !== synced.settings && me()?.role === 'admin') {
+    const { error } = await sb.from('settings').upsert({ id: 1, data: db.settings });
+    if (error) throw error;
+    synced.settings = s;
+  }
+}
+
+// Tiempo real: cualquier cambio en la base de datos (de otro usuario o dispositivo) se refleja al momento.
+let rtChannel = null, rtTimer = null;
+function subscribeRealtime() {
+  if (rtChannel) sb.removeChannel(rtChannel);
+  rtChannel = sb.channel('rfw-cambios')
+    .on('postgres_changes', { event: '*', schema: 'public' }, () => { clearTimeout(rtTimer); rtTimer = setTimeout(refreshFromCloud, 400); })
+    .subscribe();
+}
+async function refreshFromCloud() {
+  if (!ui.sessionId) return;
+  await syncChain;
+  const known = new Set(db.notifications.map(n => n.id));
+  try { await fetchAll(); } catch (e) { console.warn(e); return; }
+  db.notifications.filter(n => n.to === ui.sessionId && !n.read && !known.has(n.id)).forEach(n => { sysNotify(n.title, n.body); toast(n.title, 'info'); });
+  const el = document.activeElement, id = el?.id, pos = el?.selectionStart;
+  render();
+  if (id && document.getElementById(id)) { const e2 = document.getElementById(id); e2.focus(); try { e2.setSelectionRange(pos, pos); } catch {} }
+}
+
+async function uploadPhoto(dataUrl) {
+  const blob = await (await fetch(dataUrl)).blob();
+  const path = `modelos/${uid('f')}.jpg`;
+  const { error } = await sb.storage.from('fotos').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' });
+  if (error) throw error;
+  return sb.storage.from('fotos').getPublicUrl(path).data.publicUrl;
+}
+
+// ---------- estado de interfaz ----------
+const ui = { sessionId: null, loading: false, tab: null, sel: {}, filters: { model: '', status: '', q: '', cat: '' }, panelPaidOnly: false, draft: null, cat: '', modelCat: '', panelCat: '' };
+const me = () => db.users.find(u => u.id === ui.sessionId && u.active);
+const NO_CAT = '_none';
+const catOf = (m) => db.categories.some(c => c.id === m?.categoryId) ? m.categoryId : NO_CAT;
+const catName = (id) => db.categories.find(c => c.id === id)?.name || 'Sin tipo';
+const inCat = (m, cat) => !cat || catOf(m) === cat;
+const liveModels = () => db.models.filter(m => !m.deletedAt);
+const userById = (id) => db.users.find(u => u.id === id);
+const modelById = (id) => db.models.find(m => m.id === id);
+
+// ---------- toasts y modales ----------
+function toast(msg, type = 'ok') {
+  const el = document.createElement('div');
+  const col = type === 'error' ? 'bg-rose-600' : type === 'info' ? 'bg-slate-800' : 'bg-emerald-600';
+  el.className = `fade-in pointer-events-auto ${col} text-white text-sm px-4 py-2.5 rounded-xl shadow-lg max-w-md`;
+  el.textContent = msg;
+  document.getElementById('toast-root').appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+function openModal(html, wide = false) {
+  document.getElementById('modal-root').innerHTML = `
+    <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 p-0 sm:p-4" onclick="if(event.target===this)App.closeModal()">
+      <div class="fade-in bg-white w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl shadow-2xl">${html}</div>
+    </div>`;
+}
+function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+
+// ---------- iconos ----------
+const ic = {
+  shirt: '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linejoin="round" d="M8 3 3.5 5.5 2 10l3 1.2V21h14v-9.8L22 10l-1.5-4.5L16 3c-.8 1.4-2.2 2.2-4 2.2S8.8 4.4 8 3Z"/></svg>',
+  trash: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  edit: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linejoin="round" d="m4 20 4-1 11-11-3-3L5 16l-1 4Z"/></svg>',
+  plus: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>',
+  dl: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>',
+  x: '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>',
+  install: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 7v7m0 0-3-3m3 3 3-3"/></svg>',
+};
+// iconos de la navegación (inferior en móvil)
+const navIc = {
+  panel: '<path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/>',
+  pedidos: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/>',
+  modelos: '<path d="M8 3 3.5 5.5 2 10l3 1.2V21h14v-9.8L22 10l-1.5-4.5L16 3c-.8 1.4-2.2 2.2-4 2.2S8.8 4.4 8 3Z"/>',
+  usuarios: '<path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21c0-3.9 3.1-7 7-7s7 3.1 7 7M16 3.5a4 4 0 0 1 0 7.5M18 14.5c2.4.9 4 3.2 4 6.5"/>',
+  ajustes: '<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  catalogo: '<path d="M8 3 3.5 5.5 2 10l3 1.2V21h14v-9.8L22 10l-1.5-4.5L16 3c-.8 1.4-2.2 2.2-4 2.2S8.8 4.4 8 3Z"/>',
+  mis: '<path d="M6 7h12l-1 14H7L6 7zM9 7a3 3 0 0 1 6 0"/>',
+};
+const navSvg = (k, cls = 'w-6 h-6') => `<svg class="${cls}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" viewBox="0 0 24 24">${navIc[k]}</svg>`;
+
+// ---------- marca ----------
+const APP_NAME = 'Retro Football Wear';
+const LOGO_SHIRT = `<path d="M78 34 L52 42 L22 78 L42 104 L58 94 L58 146 L142 146 L142 94 L158 104 L178 78 L148 42 L122 34 Q100 50 78 34Z" fill="#14213d"/><path d="M82 36 L100 66 L118 36 L110 34 L100 52 L90 34Z" fill="#e8b624"/><path d="M24 80 L40 100 M176 80 L160 100" stroke="#e8b624" stroke-width="5"/>`;
+const logoIcon = (cls) => `<svg viewBox="16 26 168 126" class="${cls}" aria-hidden="true">${LOGO_SHIRT}</svg>`;
+const logoFull = (cls) => `<svg viewBox="10 22 180 172" class="${cls}" role="img" aria-label="${APP_NAME}">${LOGO_SHIRT}<text x="100" y="170" text-anchor="middle" font-family="Georgia,serif" font-weight="700" font-size="20" fill="#14213d">Retro</text><text x="100" y="188" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="10.5" fill="#b8860b" letter-spacing="3.5">FOOTBALL WEAR</text></svg>`;
+const brandMark = `<div class="flex items-center gap-2.5"><span class="grid place-items-center w-10 h-10 rounded-xl bg-cream-100 ring-1 ring-cream-200">${logoIcon('w-8 h-8')}</span><span class="leading-none"><span class="block font-serif font-bold text-[17px] text-brand-600">Retro</span><span class="block text-[9px] font-bold tracking-[0.25em] text-gold-700 mt-0.5">FOOTBALL WEAR</span></span></div>`;
+const paypalLogo = '<span class="font-extrabold italic tracking-tight"><span class="text-[#003087]">Pay</span><span class="text-[#009cde]">Pal</span></span>';
+const badge = (status) => status === 'pagado'
+  ? '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 px-2 py-0.5 text-xs font-semibold">● Pagado</span>'
+  : '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2 py-0.5 text-xs font-semibold">● Pendiente</span>';
+const sizeChips = (items) => SIZES.filter(s => items?.[s]).map(s =>
+  `<span class="inline-block rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">${s}×${items[s]}</span>`).join(' ');
+const btn = 'inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed';
+const btnP = btn + ' bg-brand-600 text-white hover:bg-brand-700 shadow-sm';
+const btnS = btn + ' bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50';
+const btnD = btn + ' bg-white text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50';
+const input = 'w-full rounded-xl border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500 px-3 py-2 text-sm bg-white';
+
+// =========================================================================
+// RENDER
+// =========================================================================
+function render() {
+  const u = me();
+  const app = document.getElementById('app');
+  if (ui.loading) { app.innerHTML = `<div class="min-h-screen grid place-items-center"><div class="text-center">${logoFull('w-28 h-auto mx-auto animate-pulse')}<p class="text-sm text-slate-500 mt-3">Cargando…</p></div></div>`; return; }
+  if (!u) { app.innerHTML = renderLogin(); return; }
+  if (!ui.tab) ui.tab = u.role === 'admin' ? 'panel' : 'catalogo';
+  const tabs = u.role === 'admin'
+    ? [['panel', 'Panel'], ['pedidos', 'Pedidos'], ['modelos', 'Modelos'], ['usuarios', 'Usuarios'], ['ajustes', 'Ajustes']]
+    : [['catalogo', 'Catálogo'], ['mis', 'Mis pedidos']];
+  const body = {
+    panel: renderPanel, pedidos: renderOrders, modelos: renderModels, usuarios: renderUsers, ajustes: renderSettings,
+    catalogo: renderCatalog, mis: renderMyOrders,
+  }[ui.tab]?.() ?? '';
+  const roleTag = `<span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'}">${u.role === 'admin' ? 'Admin' : 'Usuario'}</span>`;
+  app.innerHTML = `
+    <header class="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200 pt-[env(safe-area-inset-top)]">
+      <div class="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
+        ${brandMark}
+        <span class="hidden sm:inline">${roleTag}</span>
+        <div class="ml-auto hidden sm:flex items-center gap-2">
+          ${canInstall() ? `<button class="${btnS}" onclick="App.showInstall()">${ic.install} Instalar app</button>` : ''}
+          ${bellBtn()}
+          <button class="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-slate-100" onclick="App.profileSheet()" title="Tu cuenta"><span class="grid place-items-center w-8 h-8 rounded-full ${u.role === 'admin' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700'} text-sm font-bold">${esc(u.name[0])}</span><span class="text-sm font-semibold hidden lg:inline">${esc(u.name)}</span></button>
+          <button class="${btnS} !px-2.5" onclick="App.logout()" title="Cerrar sesión">Salir</button>
+        </div>
+        <div class="sm:hidden ml-auto">${bellBtn()}</div>
+        <button class="sm:hidden flex items-center gap-2" onclick="App.profileSheet()" aria-label="Perfil">
+          ${roleTag}<span class="grid place-items-center w-9 h-9 rounded-full ${u.role === 'admin' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700'} text-sm font-bold">${esc(u.name[0])}</span>
+        </button>
+      </div>
+      <nav class="hidden sm:flex max-w-6xl mx-auto px-4 gap-1 overflow-x-auto scroll-thin">
+        ${tabs.map(([k, l]) => `<button onclick="App.go('${k}')" class="whitespace-nowrap px-3 py-2.5 text-sm font-semibold border-b-2 ${ui.tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}">${l}</button>`).join('')}
+      </nav>
+    </header>
+    <main class="max-w-6xl mx-auto px-4 pt-5 sm:py-6 pb-28 sm:pb-6 fade-in">${body}</main>
+    <nav class="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
+      <div class="grid" style="grid-template-columns:repeat(${tabs.length},minmax(0,1fr))">
+        ${tabs.map(([k, l]) => `<button onclick="App.go('${k}')" class="flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[11px] font-semibold ${ui.tab === k ? 'text-brand-600' : 'text-slate-400'}">
+          <span class="grid place-items-center w-12 h-7 rounded-full ${ui.tab === k ? 'bg-cream-100' : ''}">${navSvg(k)}</span>${l}</button>`).join('')}
+      </div>
+    </nav>`;
+}
+function profileSheet() {
+  const u = me();
+  return `
+    <div class="p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <div class="sm:hidden mx-auto w-10 h-1 rounded-full bg-slate-200 mb-4"></div>
+      <div class="flex items-center gap-3 mb-4"><span class="grid place-items-center w-11 h-11 rounded-full bg-brand-600 text-white font-bold">${esc(u.name[0])}</span><div><div class="font-semibold">${esc(u.name)}</div><div class="text-xs text-slate-500">@${esc(u.username)} · ${u.role === 'admin' ? 'Administrador' : 'Usuario'}</div></div></div>
+      ${canInstall() ? `<button class="${btnP} w-full !py-3 mb-3" onclick="App.showInstall()">${ic.install} Instalar app en este ${isMobile() ? 'móvil' : 'ordenador'}</button>` : ''}
+      <button class="${btnS} w-full !py-3 mb-2" onclick="App.changePassword()">Cambiar mi contraseña</button>
+      <button class="${btnD} w-full !py-3" onclick="App.closeModal();App.logout()">Cerrar sesión</button>
+    </div>`;
+}
+
+// ---------- login ----------
+function renderLogin() {
+  return `
+  <div class="min-h-screen grid place-items-center px-4 py-8 pt-[calc(2rem+env(safe-area-inset-top))] bg-gradient-to-br from-cream-100 via-[#faf8f3] to-slate-100">
+    <div class="w-full max-w-sm">
+      <div class="bg-white rounded-3xl shadow-xl ring-1 ring-slate-100 p-7">
+        <div class="text-center mb-6">${logoFull('w-36 h-auto mx-auto')}<h1 class="sr-only">${APP_NAME}</h1><p class="text-sm text-slate-500 mt-2">Accede con tu usuario</p></div>
+        <form id="login-form" onsubmit="event.preventDefault();App.login(this)" class="space-y-3">
+          <div><label class="text-xs font-semibold text-slate-600">Usuario o email</label><input name="username" autocomplete="username" autocapitalize="none" class="${input} mt-1" required></div>
+          <div><label class="text-xs font-semibold text-slate-600">Contraseña</label><input name="password" type="password" autocomplete="current-password" class="${input} mt-1" required></div>
+          <button class="${btnP} w-full !py-2.5">Entrar</button>
+        </form>
+        <button class="w-full text-center text-sm font-semibold text-brand-700 mt-4" onclick="App.forgotPassword()">¿Olvidaste tu contraseña?</button>
+        <p class="text-xs text-slate-400 mt-4 text-center">Las cuentas de usuario solo las crea el administrador.</p>
+      </div>
+      ${canInstall() ? `<button class="${btnS} w-full mt-4" onclick="App.showInstall()">${ic.install} Instalar la app</button>` : ''}
+    </div>
+  </div>`;
+}
+function newPasswordForm(recovery) {
+  return `
+    <form onsubmit="event.preventDefault();App.setNewPassword(this)">
+      <div class="flex items-center px-5 py-4 border-b border-slate-100"><h2 class="font-bold text-lg flex-1">${recovery ? 'Crea tu contraseña nueva' : 'Cambiar mi contraseña'}</h2>${recovery ? '' : `<button type="button" onclick="App.closeModal()" class="text-slate-400">${ic.x}</button>`}</div>
+      <div class="p-5 space-y-3">
+        <div><label class="text-xs font-semibold text-slate-600">Contraseña nueva</label><input name="p1" type="password" autocomplete="new-password" minlength="6" required class="${input} mt-1"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Repite la contraseña</label><input name="p2" type="password" autocomplete="new-password" minlength="6" required class="${input} mt-1"></div>
+        <p class="text-xs text-slate-400">Mínimo 6 caracteres.</p>
+      </div>
+      <div class="flex justify-end gap-2 px-5 py-4 border-t border-slate-100">${recovery ? '' : `<button type="button" class="${btnS}" onclick="App.closeModal()">Cancelar</button>`}<button class="${btnP}">Guardar contraseña</button></div>
+    </form>`;
+}
+
+// ---------- USUARIO: catálogo ----------
+function myOrderFor(modelId) { return db.orders.find(o => o.userId === ui.sessionId && o.modelId === modelId); }
+function selFor(m) {
+  if (!ui.sel[m.id]) { const o = myOrderFor(m.id); ui.sel[m.id] = { items: { ...(o?.items || {}) }, img: 0 }; }
+  return ui.sel[m.id];
+}
+// Fila de filtros por tipo de modelo. `models` da los recuentos; `setter` es la acción de App que recibe el id.
+function catChips(current, setter, models, showEmpty = false) {
+  const count = (id) => models.filter(m => catOf(m) === id).length;
+  const cats = [...db.categories.map(c => [c.id, c.name]), [NO_CAT, 'Sin tipo']]
+    .filter(([id]) => showEmpty && id !== NO_CAT ? true : count(id) > 0 || id === current);
+  const chip = (id, label, n) => `<button onclick="App.${setter}('${id}')" class="whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-semibold ring-1 transition ${current === id ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:ring-slate-300'}">${esc(label)} <span class="${current === id ? 'text-white/60' : 'text-slate-400'}">${n}</span></button>`;
+  return `<div class="flex gap-2 overflow-x-auto scroll-thin pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">${chip('', 'Todos', models.length)}${cats.map(([id, l]) => chip(id, l, count(id))).join('')}</div>`;
+}
+const catTag = (m) => `<span class="inline-block rounded-md bg-cream-100 text-gold-700 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide">${esc(catName(catOf(m)))}</span>`;
+
+function renderCatalog() {
+  const all = liveModels();
+  if (!all.length) return empty('Todavía no hay modelos publicados', 'Vuelve más tarde: el administrador aún no ha publicado modelos.');
+  const q = (ui.catQ || '').trim().toLowerCase();
+  const matchQ = (m) => !q || [m.name, m.description, catName(catOf(m))].some(t => (t || '').toLowerCase().includes(q));
+  const byText = all.filter(matchQ);                       // los recuentos de los tipos respetan la búsqueda
+  const ofType = byText.filter(m => inCat(m, ui.cat));
+  if (ui.catModel && !ofType.some(m => m.id === ui.catModel)) ui.catModel = '';
+  const models = ofType.filter(m => !ui.catModel || m.id === ui.catModel);
+  const filtered = q || ui.cat || ui.catModel;
+  return `
+    <div class="mb-4"><h1 class="text-2xl font-bold">Catálogo</h1><p class="text-sm text-slate-500">Elige talla y cantidad. Puedes tener un pedido por modelo (máx. ${db.settings.maxUnits} uds.).</p></div>
+    <div class="flex flex-col sm:flex-row gap-2 mb-3">
+      <div class="relative flex-1">
+        <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3.5-3.5"/></svg>
+        <input id="cat-q" type="search" class="${input} !pl-9" placeholder="Buscar: retro, chaqueta, negra…" value="${esc(ui.catQ || '')}" oninput="App.catalogFilter('catQ',this.value)" aria-label="Buscar en el catálogo">
+      </div>
+      <select class="${input} sm:!w-64" onchange="App.catalogFilter('catModel',this.value)" aria-label="Modelo">
+        <option value="">Todos los modelos${ui.cat ? ' de este tipo' : ''}</option>
+        ${ofType.map(m => `<option value="${m.id}" ${ui.catModel === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="mb-4">${catChips(ui.cat, 'setCat', byText)}</div>
+    ${filtered ? `<div class="flex items-center gap-3 mb-4 text-sm text-slate-500"><span>${models.length} resultado${models.length === 1 ? '' : 's'}</span><button class="font-semibold text-brand-700" onclick="App.clearCatalogFilters()">Quitar filtros</button></div>` : ''}
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">${models.map(renderCard).join('') || empty('No hay modelos que coincidan', 'Prueba con otra búsqueda u otro tipo.', `<button class="${btnS} mt-4" onclick="App.clearCatalogFilters()">Quitar filtros</button>`)}</div>`;
+}
+function renderCard(m) {
+  const s = selFor(m), o = myOrderFor(m.id), locked = o?.status === 'pagado';
+  const total = units(s.items), imgs = m.images.length ? m.images : [fallbackFor(m)];
+  const changed = JSON.stringify(cleanItems(s.items)) !== JSON.stringify(cleanItems(o?.items || {}));
+  return `
+  <article class="bg-white rounded-3xl ring-1 ring-slate-200 shadow-sm overflow-hidden flex flex-col">
+    <div class="relative aspect-tee bg-slate-100">
+      ${imgTag(imgs[s.img % imgs.length], m, 'w-full h-full object-cover')}
+      ${o ? `<div class="absolute top-3 left-3">${badge(o.status)}</div>` : ''}
+      <div class="absolute top-3 right-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold shadow">${money(m.price)}</div>
+      ${imgs.length > 1 ? `<div class="absolute bottom-3 inset-x-0 flex justify-center gap-1.5">${imgs.map((_, i) => `<button onclick="App.pickImg('${m.id}',${i})" class="w-2.5 h-2.5 rounded-full ${i === s.img % imgs.length ? 'bg-white' : 'bg-white/50'} ring-1 ring-black/10" aria-label="Foto ${i + 1}"></button>`).join('')}</div>` : ''}
+    </div>
+    <div class="p-5 flex-1 flex flex-col gap-3">
+      <div>${catTag(m)}<h3 class="font-bold text-lg leading-tight mt-1.5">${esc(m.name)}</h3><p class="text-sm text-slate-500 mt-1">${esc(m.description)}</p></div>
+      <div class="grid grid-cols-4 gap-2">
+        ${SIZES.map(sz => {
+          const avail = m.sizes.includes(sz), q = s.items[sz] || 0;
+          if (!avail) return `<div class="rounded-xl ring-1 ring-slate-100 bg-slate-50 text-slate-300 text-center py-1.5 text-xs font-semibold line-through">${sz}</div>`;
+          return `<div class="rounded-xl ring-1 ${q ? 'ring-brand-500 bg-brand-50' : 'ring-slate-200'} text-center py-1">
+            <div class="text-xs font-bold ${q ? 'text-brand-700' : 'text-slate-600'}">${sz}</div>
+            <div class="flex items-center justify-center gap-1 text-sm">
+              <button ${locked ? 'disabled' : ''} onclick="App.step('${m.id}','${sz}',-1)" class="w-5 h-5 rounded-md hover:bg-white disabled:opacity-30 font-bold">−</button>
+              <span class="w-3 font-semibold tabular-nums">${q}</span>
+              <button ${locked ? 'disabled' : ''} onclick="App.step('${m.id}','${sz}',1)" class="w-5 h-5 rounded-md hover:bg-white disabled:opacity-30 font-bold">+</button>
+            </div></div>`;
+        }).join('')}
+      </div>
+      <div class="mt-auto pt-2 flex items-center gap-2">
+        <div class="text-sm text-slate-500 flex-1">${total} ud${total === 1 ? '' : 's'} · <b class="text-slate-800">${money(total * m.price)}</b></div>
+        ${locked
+          ? `<span class="text-xs text-emerald-700 font-semibold">Pedido pagado ✓</span>`
+          : o
+            ? `<button class="${btnS}" ${!changed || !total ? 'disabled' : ''} onclick="App.saveOrder('${m.id}')">Actualizar</button>
+               <button class="${btn} bg-[#ffc439] hover:bg-[#f2b72f] text-slate-900" onclick="App.pay('${o.id}')">${paypalLogo}</button>`
+            : `<button class="${btnP}" ${!total ? 'disabled' : ''} onclick="App.saveOrder('${m.id}')">Solicitar</button>`}
+      </div>
+      ${o && !locked ? `<button onclick="App.cancelOrder('${o.id}')" class="text-xs text-slate-400 hover:text-rose-600 self-start">Cancelar mi pedido</button>` : ''}
+    </div>
+  </article>`;
+}
+const cleanItems = (items) => Object.fromEntries(SIZES.filter(s => items[s]).map(s => [s, items[s]]));
+
+// ---------- USUARIO: mis pedidos ----------
+function renderMyOrders() {
+  const list = db.orders.filter(o => o.userId === ui.sessionId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (!list.length) return empty('Aún no has hecho pedidos', 'Ve al catálogo, elige tu talla y solicita tu camiseta.', `<button class="${btnP} mt-4" onclick="App.go('catalogo')">Ir al catálogo</button>`);
+  const pend = list.filter(o => o.status !== 'pagado').reduce((a, o) => a + orderTotal(o), 0);
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-5"><div class="flex-1"><h1 class="text-2xl font-bold">Mis pedidos</h1><p class="text-sm text-slate-500">Pendiente de pago: <b>${money(pend)}</b></p></div></div>
+    <div class="grid gap-3">
+      ${list.map(o => {
+        const m = modelById(o.modelId);
+        return `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4 flex flex-wrap items-center gap-4">
+          <div class="w-16 h-20 rounded-xl overflow-hidden bg-slate-100 shrink-0">${imgTag(m?.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}</div>
+          <div class="flex-1 min-w-[180px]">
+            <div class="font-semibold">${esc(m?.name || o.modelName)} ${m?.deletedAt ? '<span class="text-xs text-slate-400">(retirado)</span>' : ''}</div>
+            <div class="mt-1">${sizeChips(o.items)}</div>
+            <div class="text-xs text-slate-400 mt-1">Pedido ${fmtDate(o.createdAt)}${o.payment ? ` · Pagado ${fmtDate(o.payment.paidAt)} · Tx ${esc(o.payment.txId)}` : ''}</div>
+            ${o.confirmation ? `<div class="mt-2 rounded-xl bg-brand-50 ring-1 ring-brand-100 px-3 py-2 text-sm text-brand-700">
+              <div class="font-semibold">✓ Pedido confirmado${o.confirmation.eta ? ` · entrega estimada: ${esc(o.confirmation.eta)}` : ''}</div>
+              ${o.confirmation.message ? `<div class="text-slate-600 text-xs mt-0.5 whitespace-pre-line">${esc(o.confirmation.message)}</div>` : ''}</div>` : ''}
+          </div>
+          <div class="text-right"><div class="font-bold">${money(orderTotal(o))}</div><div class="mt-1">${badge(o.status)}</div></div>
+          ${o.status !== 'pagado' ? `<button class="${btn} bg-[#ffc439] hover:bg-[#f2b72f] text-slate-900 w-full sm:w-auto" onclick="App.pay('${o.id}')">Pagar con ${paypalLogo}</button>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+const orderTotal = (o) => (o.unitPrice ?? modelById(o.modelId)?.price ?? 0) * units(o.items);
+
+// ---------- ADMIN: panel ----------
+function renderPanel() {
+  const orders = db.orders.filter(o => !ui.panelPaidOnly || o.status === 'pagado');
+  const paid = db.orders.filter(o => o.status === 'pagado');
+  const kpi = (label, value, sub = '') => `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4"><div class="text-xs font-semibold text-slate-500">${label}</div><div class="text-2xl font-bold mt-1">${value}</div>${sub ? `<div class="text-xs text-slate-400 mt-0.5">${sub}</div>` : ''}</div>`;
+  const panelModels = db.models.filter(m => !m.deletedAt || orders.some(o => o.modelId === m.id));
+  const models = panelModels.filter(m => inCat(m, ui.panelCat));
+  const byCat = [...db.categories.map(c => c.id), NO_CAT].map(id => {
+    const ids = new Set(panelModels.filter(m => catOf(m) === id).map(m => m.id));
+    return [id, orders.filter(o => ids.has(o.modelId)).reduce((a, o) => a + units(o.items), 0)];
+  }).filter(([, n]) => n);
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-5">
+      <div class="flex-1"><h1 class="text-2xl font-bold">Panel de pedidos</h1><p class="text-sm text-slate-500">Unidades solicitadas por modelo y talla para preparar los lotes de fabricación.</p></div>
+      <label class="flex items-center gap-2 text-sm font-medium bg-white ring-1 ring-slate-200 rounded-xl px-3 py-2"><input type="checkbox" class="accent-brand-600" ${ui.panelPaidOnly ? 'checked' : ''} onchange="App.setPanelPaid(this.checked)"> Solo pedidos pagados</label>
+      <button class="${btnS}" onclick="App.exportBatch()">${ic.dl} Lote de fabricación (CSV)</button>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      ${kpi('Pedidos', db.orders.length, `${paid.length} pagados · ${db.orders.length - paid.length} pendientes`)}
+      ${kpi('Unidades totales', db.orders.reduce((a, o) => a + units(o.items), 0), `${paid.reduce((a, o) => a + units(o.items), 0)} pagadas`)}
+      ${kpi('Usuarios con pedido', new Set(db.orders.map(o => o.userId)).size, `de ${db.users.filter(u => u.role === 'user').length} usuarios`)}
+      ${kpi('Cobrado', money(paid.reduce((a, o) => a + orderTotal(o), 0)), `Pendiente: ${money(db.orders.filter(o => o.status !== 'pagado').reduce((a, o) => a + orderTotal(o), 0))}`)}
+    </div>
+    ${byCat.length ? `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4 mb-4"><div class="text-xs font-semibold text-slate-500 mb-2">Unidades por tipo${ui.panelPaidOnly ? ' (pagadas)' : ''}</div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">${byCat.map(([id, n]) => `<div class="rounded-xl bg-cream-100/60 px-3 py-2"><div class="text-xs font-semibold text-slate-600 truncate">${esc(catName(id))}</div><div class="text-lg font-bold">${n}</div></div>`).join('')}</div></div>` : ''}
+    <div class="mb-4">${catChips(ui.panelCat, 'setPanelCat', panelModels)}</div>
+    <div class="grid gap-5">
+      ${models.map(m => {
+        const os = orders.filter(o => o.modelId === m.id);
+        const sum = (f, s) => os.filter(f).reduce((a, o) => a + (o.items[s] || 0), 0);
+        const all = () => true, isPaid = o => o.status === 'pagado', isPend = o => o.status !== 'pagado';
+        const tot = os.reduce((a, o) => a + units(o.items), 0);
+        const max = Math.max(1, ...SIZES.map(s => sum(all, s)));
+        return `<section class="bg-white rounded-2xl ring-1 ring-slate-200 overflow-hidden">
+          <div class="flex flex-wrap items-center gap-4 p-4 border-b border-slate-100">
+            <div class="w-12 h-14 rounded-lg overflow-hidden bg-slate-100">${imgTag(m.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}</div>
+            <div class="flex-1 min-w-0">${catTag(m)}<div class="font-bold mt-1">${esc(m.name)} ${m.deletedAt ? '<span class="text-xs font-medium text-rose-500">(eliminado del catálogo)</span>' : ''}</div><div class="text-xs text-slate-500">${money(m.price)} · ${new Set(os.map(o => o.userId)).size} usuarios · ${os.length} pedidos</div></div>
+            <div class="text-right"><div class="text-2xl font-bold">${tot}</div><div class="text-xs text-slate-500">unidades</div></div>
+          </div>
+          <div class="overflow-x-auto scroll-thin">
+            <table class="w-full text-sm">
+              <thead><tr class="text-xs text-slate-500"><th class="text-left font-semibold px-4 py-2">Talla</th>${SIZES.map(s => `<th class="font-semibold px-2 py-2 ${m.sizes.includes(s) ? '' : 'text-slate-300'}">${s}</th>`).join('')}<th class="font-semibold px-4 py-2 text-right">Total</th></tr></thead>
+              <tbody>
+                <tr class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">Unidades</td>${SIZES.map(s => { const v = sum(all, s); return `<td class="px-2 py-2 text-center"><div class="font-bold ${v ? '' : 'text-slate-300'}">${v}</div><div class="h-1.5 mt-1 rounded bg-slate-100"><div class="h-1.5 rounded bg-brand-500" style="width:${(v / max) * 100}%"></div></div></td>`; }).join('')}<td class="px-4 py-2 text-right font-bold">${tot}</td></tr>
+                <tr class="border-t border-slate-100 text-emerald-700"><td class="px-4 py-1.5 text-xs font-semibold">Pagadas</td>${SIZES.map(s => `<td class="px-2 py-1.5 text-center text-xs">${sum(isPaid, s) || '·'}</td>`).join('')}<td class="px-4 py-1.5 text-right text-xs font-semibold">${os.filter(isPaid).reduce((a, o) => a + units(o.items), 0)}</td></tr>
+                <tr class="border-t border-slate-100 text-amber-700"><td class="px-4 py-1.5 text-xs font-semibold">Pendientes</td>${SIZES.map(s => `<td class="px-2 py-1.5 text-center text-xs">${sum(isPend, s) || '·'}</td>`).join('')}<td class="px-4 py-1.5 text-right text-xs font-semibold">${os.filter(isPend).reduce((a, o) => a + units(o.items), 0)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          ${os.length ? `<details class="border-t border-slate-100"><summary class="px-4 py-2.5 text-sm font-semibold text-brand-700 cursor-pointer">Ver quién lo ha pedido</summary>
+            <ul class="px-4 pb-3 grid sm:grid-cols-2 gap-1.5">${os.map(o => `<li class="flex items-center gap-2 text-sm"><span class="flex-1">${esc(userById(o.userId)?.name || '¿?')}</span>${sizeChips(o.items)} ${badge(o.status)}</li>`).join('')}</ul></details>` : ''}
+        </section>`;
+      }).join('') || empty('Sin modelos', 'Crea tu primer modelo en la pestaña Modelos.')}
+    </div>`;
+}
+
+// ---------- ADMIN: pedidos ----------
+function filteredOrders() {
+  const f = ui.filters, q = f.q.trim().toLowerCase();
+  return db.orders.filter(o => (!f.model || o.modelId === f.model) && (!f.status || o.status === f.status) && inCat(modelById(o.modelId), f.cat) &&
+    (!q || (userById(o.userId)?.name || '').toLowerCase().includes(q) || (o.payment?.txId || '').toLowerCase().includes(q)))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+function renderOrders() {
+  const list = filteredOrders(), f = ui.filters;
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-4">
+      <div class="flex-1"><h1 class="text-2xl font-bold">Pedidos</h1><p class="text-sm text-slate-500">Estado de pago y quién ha pagado cada pedido.</p></div>
+      <button class="${btnS}" onclick="App.exportOrders()">${ic.dl} Exportar CSV</button>
+    </div>
+    <div class="flex flex-wrap gap-2 mb-4">
+      <input class="${input} sm:!w-56" placeholder="Buscar usuario o Tx…" value="${esc(f.q)}" oninput="App.filter('q',this.value)" id="f-q">
+      <select class="${input} !w-auto flex-1 sm:flex-none" onchange="App.filter('cat',this.value)"><option value="">Todos los tipos</option>${db.categories.map(c => `<option value="${c.id}" ${f.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <select class="${input} !w-auto flex-1 sm:flex-none" onchange="App.filter('model',this.value)"><option value="">Todos los modelos</option>${db.models.filter(m => inCat(m, f.cat)).map(m => `<option value="${m.id}" ${f.model === m.id ? 'selected' : ''}>${esc(m.name)}${m.deletedAt ? ' (eliminado)' : ''}</option>`).join('')}</select>
+      <select class="${input} !w-auto flex-1 sm:flex-none" onchange="App.filter('status',this.value)"><option value="">Todos los estados</option><option value="pagado" ${f.status === 'pagado' ? 'selected' : ''}>Pagado</option><option value="pendiente" ${f.status === 'pendiente' ? 'selected' : ''}>Pendiente</option></select>
+    </div>
+    <div class="md:hidden grid gap-3">
+      ${list.map(o => {
+        const u = userById(o.userId), m = modelById(o.modelId), p = o.payment;
+        return `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4">
+          <div class="flex items-start gap-3">
+            <div class="flex-1 min-w-0"><div class="font-semibold">${esc(u?.name || 'Usuario borrado')}</div><div class="text-sm text-slate-600 truncate">${esc(m?.name || o.modelName)}</div><div class="mt-1.5">${sizeChips(o.items)}</div></div>
+            <div class="text-right"><div class="font-bold">${money(orderTotal(o))}</div><div class="mt-1">${badge(o.status)}</div></div>
+          </div>
+          ${p ? `<div class="mt-3 rounded-xl bg-emerald-50/60 px-3 py-2 text-xs text-slate-600">Pagado por <b>${esc(userById(p.paidByUserId)?.name || p.payerName)}</b> · ${esc(p.payerEmail)}<br><span class="text-slate-400">${esc(p.method)} · ${esc(p.txId)} · ${fmtDate(p.paidAt)}</span></div>` : ''}
+          ${o.confirmation ? `<div class="mt-2">${confirmChip(o)}</div>` : ''}
+          <div class="flex gap-2 mt-3">
+            <button class="${o.confirmation ? btnS : btnP} flex-1" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
+            ${o.status === 'pagado'
+              ? `<button class="${btnS} flex-1" onclick="App.markPending('${o.id}')">Marcar pendiente</button>`
+              : `<button class="${btnS} flex-1" onclick="App.markPaidManual('${o.id}')">Marcar pagado</button>`}
+            <button class="${btnD}" aria-label="Eliminar pedido" onclick="App.deleteOrder('${o.id}')">${ic.trash}</button>
+          </div></div>`;
+      }).join('') || `<p class="text-center text-slate-400 py-10">No hay pedidos con estos filtros.</p>`}
+    </div>
+    <div class="hidden md:block bg-white rounded-2xl ring-1 ring-slate-200 overflow-x-auto scroll-thin">
+      <table class="w-full text-sm min-w-[820px]">
+        <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="text-left px-4 py-2.5 font-semibold">Usuario</th><th class="text-left px-3 font-semibold">Modelo</th><th class="text-left px-3 font-semibold">Tallas</th><th class="text-right px-3 font-semibold">Importe</th><th class="text-left px-3 font-semibold">Estado</th><th class="text-left px-3 font-semibold">Pago registrado</th><th class="px-4"></th></tr></thead>
+        <tbody>
+          ${list.map(o => {
+            const u = userById(o.userId), m = modelById(o.modelId), p = o.payment;
+            return `<tr class="border-t border-slate-100 align-top">
+              <td class="px-4 py-3"><div class="font-semibold">${esc(u?.name || 'Usuario borrado')}</div><div class="text-xs text-slate-400">${fmtDate(o.createdAt)}</div></td>
+              <td class="px-3 py-3">${esc(m?.name || o.modelName)}${m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''}</td>
+              <td class="px-3 py-3">${sizeChips(o.items)}</td>
+              <td class="px-3 py-3 text-right font-semibold">${money(orderTotal(o))}</td>
+              <td class="px-3 py-3"><div class="flex flex-col items-start gap-1">${badge(o.status)}${confirmChip(o)}</div></td>
+              <td class="px-3 py-3 text-xs">${p ? `<div class="font-semibold text-slate-700">${esc(userById(p.paidByUserId)?.name || p.payerName)}</div><div class="text-slate-500">${esc(p.payerEmail)}</div><div class="text-slate-400">${esc(p.method)} · ${esc(p.txId)}</div><div class="text-slate-400">${fmtDate(p.paidAt)}</div>` : '<span class="text-slate-400">—</span>'}</td>
+              <td class="px-4 py-3 text-right whitespace-nowrap">
+                <button class="${o.confirmation ? btnS : btnP} !px-2 !py-1 text-xs" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
+                ${o.status === 'pagado'
+                  ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPending('${o.id}')">Marcar pendiente</button>`
+                  : `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPaidManual('${o.id}')">Marcar pagado</button>`}
+                <button class="${btnD} !px-2 !py-1" title="Eliminar pedido" onclick="App.deleteOrder('${o.id}')">${ic.trash}</button>
+              </td></tr>`;
+          }).join('') || `<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No hay pedidos con estos filtros.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <h2 class="font-bold mt-8 mb-2">Registro de pagos</h2>
+    <div class="bg-white rounded-2xl ring-1 ring-slate-200 overflow-x-auto scroll-thin">
+      <table class="w-full text-xs min-w-[640px]"><thead class="bg-slate-50 text-slate-500"><tr><th class="text-left px-4 py-2 font-semibold">Fecha</th><th class="text-left px-3 font-semibold">Pagado por</th><th class="text-left px-3 font-semibold">Cuenta PayPal</th><th class="text-left px-3 font-semibold">Pedido</th><th class="text-left px-3 font-semibold">Transacción</th><th class="text-right px-4 font-semibold">Importe</th></tr></thead>
+      <tbody>${[...db.payments].sort((a, b) => b.paidAt.localeCompare(a.paidAt)).map(p => {
+        const o = db.orders.find(x => x.id === p.orderId);
+        return `<tr class="border-t border-slate-100"><td class="px-4 py-2">${fmtDate(p.paidAt)}</td><td class="px-3">${esc(userById(p.paidByUserId)?.name || p.payerName)}</td><td class="px-3">${esc(p.payerEmail)}</td><td class="px-3">${o ? `${esc(o.modelName)} ${sizeChips(o.items)}` : '<span class="text-slate-400">pedido eliminado</span>'}</td><td class="px-3 font-mono">${esc(p.txId)}${p.revoked ? ' <span class="text-rose-500">(anulado)</span>' : ''}</td><td class="px-4 text-right font-semibold">${money(p.amount)}</td></tr>`;
+      }).join('') || '<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">Sin pagos todavía.</td></tr>'}</tbody></table>
+    </div>`;
+}
+
+// ---------- ADMIN: modelos ----------
+function renderModels() {
+  const all = liveModels(), models = all.filter(m => inCat(m, ui.modelCat));
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-4">
+      <div class="flex-1 min-w-[200px]"><h1 class="text-2xl font-bold">Modelos</h1><p class="text-sm text-slate-500">Publica, edita o retira modelos del catálogo.</p></div>
+      <button class="${btnS}" onclick="App.manageCats()">Gestionar tipos</button>
+      <button class="${btnP}" onclick="App.editModel()">${ic.plus} Nuevo modelo</button>
+    </div>
+    <div class="mb-5">${catChips(ui.modelCat, 'setModelCat', all, true)}</div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      ${models.map(m => {
+        const n = db.orders.filter(o => o.modelId === m.id);
+        return `<article class="bg-white rounded-2xl ring-1 ring-slate-200 overflow-hidden">
+          <div class="aspect-tee bg-slate-100 relative">${imgTag(m.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}
+            <span class="absolute bottom-2 right-2 rounded-full bg-black/60 text-white text-xs px-2 py-0.5">${m.images.length} foto${m.images.length === 1 ? '' : 's'}</span></div>
+          <div class="p-4">
+            ${catTag(m)}
+            <div class="flex items-start gap-2 mt-1.5"><h3 class="font-bold flex-1">${esc(m.name)}</h3><span class="font-semibold">${money(m.price)}</span></div>
+            <p class="text-xs text-slate-500 mt-1 line-clamp-2">${esc(m.description)}</p>
+            <div class="flex flex-wrap gap-1 mt-2">${SIZES.map(s => `<span class="text-[11px] font-semibold rounded px-1.5 py-0.5 ${m.sizes.includes(s) ? 'bg-slate-100 text-slate-700' : 'text-slate-300 line-through'}">${s}</span>`).join('')}</div>
+            <div class="text-xs text-slate-500 mt-2">${n.length} pedidos · ${n.reduce((a, o) => a + units(o.items), 0)} uds.</div>
+            <div class="flex gap-2 mt-3"><button class="${btnS} flex-1" onclick="App.editModel('${m.id}')">${ic.edit} Editar</button><button class="${btnD}" onclick="App.deleteModel('${m.id}')" title="Eliminar modelo obsoleto">${ic.trash}</button></div>
+          </div></article>`;
+      }).join('') || empty(all.length ? 'No hay modelos de este tipo' : 'No hay modelos publicados', 'Pulsa «Nuevo modelo» para añadir uno.')}
+    </div>`;
+}
+function catsForm() {
+  const used = (id) => db.models.filter(m => !m.deletedAt && m.categoryId === id).length;
+  return `
+    <div class="flex items-center px-5 py-4 border-b border-slate-100"><h2 class="font-bold text-lg flex-1">Tipos de modelo</h2><button onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
+    <div class="p-5 space-y-2">
+      ${db.categories.map(c => `<div class="flex items-center gap-2">
+        <input class="${input}" value="${esc(c.name)}" onchange="App.renameCat('${c.id}',this.value)" aria-label="Nombre del tipo">
+        <span class="text-xs text-slate-400 w-16 text-right shrink-0">${used(c.id)} mod.</span>
+        <button class="${btnD} !px-2.5" onclick="App.deleteCat('${c.id}')" aria-label="Eliminar tipo">${ic.trash}</button>
+      </div>`).join('')}
+      <form class="flex gap-2 pt-3 border-t border-slate-100 mt-3" onsubmit="event.preventDefault();App.addCat(this.name.value)">
+        <input name="name" class="${input}" placeholder="Nuevo tipo, p. ej. Sudadera" required>
+        <button class="${btnP} shrink-0">${ic.plus} Añadir</button>
+      </form>
+      <p class="text-xs text-slate-400">Los cambios de nombre se guardan al salir del campo. Solo se puede eliminar un tipo que no use ningún modelo publicado.</p>
+    </div>`;
+}
+function modelForm() {
+  const d = ui.draft;
+  return `
+    <div class="flex items-center gap-2 px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10"><h2 class="font-bold text-lg flex-1">${d.id ? 'Editar modelo' : 'Nuevo modelo'}</h2><button onclick="App.closeModal()" class="text-slate-400 hover:text-slate-700">${ic.x}</button></div>
+    <div class="p-5 grid md:grid-cols-2 gap-5">
+      <div class="space-y-3">
+        <div><label class="text-xs font-semibold text-slate-600">Tipo de modelo</label>
+          <select class="${input} mt-1" onchange="App.draftCat(this.value)">
+            <option value="" ${d.categoryId ? '' : 'selected'} disabled>Elige un tipo…</option>
+            ${db.categories.map(c => `<option value="${c.id}" ${d.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+            <option value="__new">+ Nuevo tipo…</option>
+          </select></div>
+        <div><label class="text-xs font-semibold text-slate-600">Nombre</label><input class="${input} mt-1" value="${esc(d.name)}" oninput="App.draftSet('name',this.value)" placeholder="p. ej. Camiseta Verano 2027"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Descripción</label><textarea rows="3" class="${input} mt-1" oninput="App.draftSet('description',this.value)">${esc(d.description)}</textarea></div>
+        <div><label class="text-xs font-semibold text-slate-600">Precio (${esc(db.settings.currency)})</label><input type="number" min="0" step="0.01" class="${input} mt-1" value="${d.price}" oninput="App.draftSet('price',this.value)"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Tallas disponibles</label>
+          <div class="flex flex-wrap gap-2 mt-1">${SIZES.map(s => `<label class="cursor-pointer"><input type="checkbox" class="peer sr-only" ${d.sizes.includes(s) ? 'checked' : ''} onchange="App.draftSize('${s}',this.checked)"><span class="block rounded-lg ring-1 ring-slate-200 px-2.5 py-1 text-sm font-semibold peer-checked:bg-brand-600 peer-checked:text-white peer-checked:ring-brand-600">${s}</span></label>`).join('')}</div></div>
+      </div>
+      <div class="space-y-3">
+        <label class="text-xs font-semibold text-slate-600">Fotos (la primera es la portada)</label>
+        <div class="grid grid-cols-3 gap-2" id="draft-imgs">
+          ${d.images.map((src, i) => `<div class="relative aspect-tee rounded-xl overflow-hidden bg-slate-100 ring-1 ${i === 0 ? 'ring-brand-500 ring-2' : 'ring-slate-200'}">
+            <img src="${esc(src)}" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='${fallbackFor(d)}'">
+            <div class="absolute inset-x-0 bottom-0 flex justify-between p-1 bg-gradient-to-t from-black/50">
+              <button class="text-white text-xs px-1.5 rounded bg-black/30 disabled:opacity-30" ${i === 0 ? 'disabled' : ''} onclick="App.draftCover(${i})" title="Usar como portada">★</button>
+              <button class="text-white text-xs px-1.5 rounded bg-black/30" onclick="App.draftRemoveImg(${i})" title="Quitar">✕</button>
+            </div></div>`).join('')}
+          <label class="aspect-tee rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-500 grid place-items-center text-center text-xs text-slate-500 cursor-pointer p-2">
+            <span>${ic.plus}<br>Subir fotos</span><input type="file" accept="image/*" multiple class="hidden" onchange="App.uploadImgs(this.files)">
+          </label>
+        </div>
+        <label class="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-xl p-2.5"><input type="checkbox" class="mt-0.5 accent-brand-600" id="enhance" ${ui.enhance !== false ? 'checked' : ''} onchange="ui.enhance=this.checked"> <span><b>Mejorar fotos al subirlas</b>: recorte 4:5 centrado, ajuste suave de brillo, contraste y color, y compresión para web.</span></label>
+        <div class="flex gap-2"><input id="img-url" class="${input}" placeholder="…o pega un enlace https:// a una foto"><button class="${btnS}" onclick="App.draftAddUrl()">Añadir</button></div>
+        <p id="upload-status" class="text-xs text-slate-500"></p>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 px-5 py-4 border-t border-slate-100 sticky bottom-0 bg-white">
+      <button class="${btnS}" onclick="App.closeModal()">Cancelar</button>
+      <button class="${btnP}" onclick="App.saveModel()">${d.id ? 'Guardar cambios' : 'Publicar modelo'}</button>
+    </div>`;
+}
+
+// ---------- ADMIN: usuarios ----------
+function renderUsers() {
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-5">
+      <div class="flex-1"><h1 class="text-2xl font-bold">Usuarios</h1><p class="text-sm text-slate-500">Solo el administrador puede dar de alta cuentas.</p></div>
+      <button class="${btnP}" onclick="App.editUser()">${ic.plus} Nuevo usuario</button>
+    </div>
+    <div class="md:hidden grid gap-2.5">
+      ${db.users.map(u => {
+        const os = db.orders.filter(o => o.userId === u.id);
+        return `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4 ${u.active ? '' : 'opacity-60'}">
+          <div class="flex items-center gap-3">
+            <span class="grid place-items-center w-10 h-10 rounded-full ${u.role === 'admin' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700'} font-bold">${esc(u.name[0])}</span>
+            <div class="flex-1 min-w-0"><div class="font-semibold truncate">${esc(u.name)}</div><div class="text-xs text-slate-500 truncate">@${esc(u.username)} · ${esc(u.email)}</div><div class="text-xs text-slate-400">${u.role === 'admin' ? 'Admin' : 'Usuario'} · ${os.length} pedidos${u.active ? '' : ' · desactivado'}</div></div>
+          </div>
+          <div class="flex gap-2 mt-3">
+            <button class="${btnS} flex-1" onclick="App.editUser('${u.id}')">${ic.edit} Editar</button>
+            ${u.id !== ui.sessionId ? `<button class="${btnS} flex-1" onclick="App.toggleUser('${u.id}')">${u.active ? 'Desactivar' : 'Activar'}</button><button class="${btnD}" aria-label="Eliminar" onclick="App.deleteUser('${u.id}')">${ic.trash}</button>` : ''}
+          </div></div>`;
+      }).join('')}
+    </div>
+    <div class="hidden md:block bg-white rounded-2xl ring-1 ring-slate-200 overflow-x-auto scroll-thin">
+      <table class="w-full text-sm min-w-[720px]">
+        <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="text-left px-4 py-2.5 font-semibold">Nombre</th><th class="text-left px-3 font-semibold">Usuario</th><th class="text-left px-3 font-semibold">Email</th><th class="text-left px-3 font-semibold">Rol</th><th class="text-left px-3 font-semibold">Pedidos</th><th class="text-left px-3 font-semibold">Estado</th><th class="px-4"></th></tr></thead>
+        <tbody>${db.users.map(u => {
+          const os = db.orders.filter(o => o.userId === u.id);
+          return `<tr class="border-t border-slate-100">
+            <td class="px-4 py-3 font-semibold">${esc(u.name)}</td><td class="px-3">@${esc(u.username)}</td><td class="px-3 text-slate-500">${esc(u.email)}</td>
+            <td class="px-3"><span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'}">${u.role}</span></td>
+            <td class="px-3 text-xs">${os.length} (${os.filter(o => o.status === 'pagado').length} pagados)</td>
+            <td class="px-3">${u.active ? '<span class="text-xs text-emerald-700 font-semibold">Activo</span>' : '<span class="text-xs text-slate-400 font-semibold">Desactivado</span>'}</td>
+            <td class="px-4 py-2 text-right whitespace-nowrap">
+              <button class="${btnS} !px-2 !py-1" onclick="App.editUser('${u.id}')" title="Editar">${ic.edit}</button>
+              ${u.id !== ui.sessionId ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.toggleUser('${u.id}')">${u.active ? 'Desactivar' : 'Activar'}</button>
+              <button class="${btnD} !px-2 !py-1" onclick="App.deleteUser('${u.id}')" title="Eliminar">${ic.trash}</button>` : ''}
+            </td></tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+function userForm(u) {
+  return `
+    <form onsubmit="event.preventDefault();App.saveUser(this,'${u?.id || ''}')">
+      <div class="flex items-center px-5 py-4 border-b border-slate-100"><h2 class="font-bold text-lg flex-1">${u ? 'Editar usuario' : 'Nuevo usuario'}</h2><button type="button" onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
+      <div class="p-5 grid sm:grid-cols-2 gap-3">
+        <div class="sm:col-span-2"><label class="text-xs font-semibold text-slate-600">Nombre completo</label><input name="name" required class="${input} mt-1" value="${esc(u?.name)}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Usuario</label><input name="username" required pattern="[a-zA-Z0-9._-]{3,}" title="Mínimo 3 caracteres: letras, números, . _ -" class="${input} mt-1" value="${esc(u?.username)}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Email (PayPal)</label><input name="email" type="email" required class="${input} mt-1" value="${esc(u?.email)}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">${u ? 'Nueva contraseña (opcional)' : 'Contraseña'}</label><input name="password" ${u ? '' : 'required'} minlength="4" class="${input} mt-1" placeholder="${u ? 'Dejar vacío para no cambiar' : ''}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Rol</label><select name="role" class="${input} mt-1" ${u?.id === ui.sessionId ? 'disabled' : ''}><option value="user" ${u?.role !== 'admin' ? 'selected' : ''}>Usuario</option><option value="admin" ${u?.role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>
+      </div>
+      <div class="flex justify-end gap-2 px-5 py-4 border-t border-slate-100"><button type="button" class="${btnS}" onclick="App.closeModal()">Cancelar</button><button class="${btnP}">${u ? 'Guardar' : 'Crear usuario'}</button></div>
+    </form>`;
+}
+
+// ---------- ADMIN: ajustes ----------
+function renderSettings() {
+  const s = db.settings;
+  return `
+    <h1 class="text-2xl font-bold mb-5">Ajustes</h1>
+    <div class="grid lg:grid-cols-2 gap-5">
+      <form class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" onsubmit="event.preventDefault();App.saveSettings(this)">
+        <h2 class="font-semibold">Pedidos y pagos</h2>
+        <div><label class="text-xs font-semibold text-slate-600">Máximo de unidades por pedido (por modelo)</label><input name="maxUnits" type="number" min="1" max="50" class="${input} mt-1" value="${s.maxUnits}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Moneda</label><select name="currency" class="${input} mt-1">${['EUR', 'USD', 'GBP'].map(c => `<option ${s.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-2"><legend class="text-xs font-semibold text-slate-600 px-1">Avisos a los administradores (nuevo pedido, cambio y pago)</legend>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertNotif" class="accent-brand-600 w-4 h-4" ${s.alertNotif ? 'checked' : ''}> Notificación</label>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertEmail" class="accent-brand-600 w-4 h-4" ${s.alertEmail ? 'checked' : ''}> Email a la dirección de cada administrador</label></fieldset>
+        <div><label class="text-xs font-semibold text-slate-600">PayPal Client ID (Sandbox)</label><input name="paypalClientId" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId)}" placeholder="Vacío = pago simulado">
+          <p class="text-xs text-slate-500 mt-1">Con un Client ID de <b>sandbox</b> (developer.paypal.com) se usan los botones reales de PayPal en modo pruebas. Sin él, el pago se simula de forma realista. En ambos casos se registra qué usuario ha pagado.</p></div>
+        <button class="${btnP}">Guardar ajustes</button>
+      </form>
+      <div class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3">
+        <h2 class="font-semibold">Datos en la nube</h2>
+        <p class="text-sm text-slate-500">Pedidos, usuarios, modelos y fotos se guardan en Supabase y se sincronizan al momento entre todos los dispositivos. Los cambios de otros usuarios aparecen sin recargar.</p>
+        <p class="text-xs text-slate-400">Antes de usar la app de verdad, desactiva o elimina las cuentas de prueba (emails @ejemplo.com) en la pestaña Usuarios.</p>
+      </div>
+    </div>`;
+}
+
+const empty = (title, text, extra = '') => `<div class="col-span-full text-center py-16 bg-white rounded-3xl ring-1 ring-slate-200"><div class="mx-auto w-12 h-12 grid place-items-center rounded-2xl bg-slate-100 text-slate-500">${ic.shirt}</div><h3 class="font-semibold mt-3">${title}</h3><p class="text-sm text-slate-500 mt-1">${text}</p>${extra}</div>`;
+
+// =========================================================================
+// MEJORA DE FOTOS (canvas)
+// =========================================================================
+function enhanceImage(file, enhance) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Formato de imagen no soportado'));
+      img.onload = () => {
+        const W = 900, H = 1125; // 4:5
+        let sx = 0, sy = 0, sw = img.width, sh = img.height;
+        const c = document.createElement('canvas');
+        if (enhance) {
+          const target = W / H;
+          if (sw / sh > target) { sw = sh * target; sx = (img.width - sw) / 2; } else { sh = sw / target; sy = (img.height - sh) / 2; }
+          c.width = W; c.height = H;
+        } else {
+          const k = Math.min(1, 1200 / Math.max(sw, sh));
+          c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+        }
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingQuality = 'high';
+        if (enhance) ctx.filter = 'brightness(1.04) contrast(1.08) saturate(1.10)';
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        if (enhance) { // viñeta muy sutil para centrar la atención en la prenda
+          ctx.filter = 'none';
+          const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.75);
+          g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.10)');
+          ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        }
+        resolve(c.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// =========================================================================
+// PAYPAL
+// =========================================================================
+let paypalLoadedFor = null;
+function loadPaypalSdk(clientId, currency) {
+  const key = clientId + currency;
+  if (paypalLoadedFor === key && window.paypal) return Promise.resolve();
+  document.getElementById('paypal-sdk')?.remove();
+  delete window.paypal;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.id = 'paypal-sdk';
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${currency}&intent=capture&disable-funding=card,credit`;
+    s.onload = () => { paypalLoadedFor = key; resolve(); };
+    s.onerror = () => reject(new Error('No se pudo cargar el SDK de PayPal'));
+    document.head.appendChild(s);
+  });
+}
+function registerPayment(orderId, info) {
+  const o = db.orders.find(x => x.id === orderId), u = me();
+  o.payment = { txId: info.txId, method: info.method, payerEmail: info.payerEmail || u.email, payerName: info.payerName || u.name, paidByUserId: u.id, amount: orderTotal(o), paidAt: new Date().toISOString() };
+  o.status = 'pagado'; o.updatedAt = o.payment.paidAt;
+  db.payments.push({ id: uid('p'), orderId: o.id, userId: o.userId, ...o.payment });
+  alertAdmins('pago', o, `Pago recibido: ${o.modelName}`, `${u.name} ha pagado su pedido de ${o.modelName} (${itemsText(o.items)}).
+Importe: ${money(o.payment.amount)} · ${o.payment.method}
+Cuenta PayPal: ${o.payment.payerEmail} · Transacción ${o.payment.txId}`);
+  save();
+}
+function paySuccess(o, txId) {
+  document.getElementById('pp-body').innerHTML = `
+    <div class="text-center py-6">
+      <div class="mx-auto w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 grid place-items-center text-3xl">✓</div>
+      <h3 class="font-bold text-lg mt-3">Pago completado</h3>
+      <p class="text-sm text-slate-500 mt-1">${money(orderTotal(o))} · Transacción <span class="font-mono">${esc(txId)}</span></p>
+      <p class="text-xs text-slate-400 mt-1">El administrador ya ve tu pedido como <b>Pagado</b>.</p>
+      <button class="${btnP} mt-5" onclick="App.closeModal()">Hecho</button>
+    </div>`;
+  ui.sel = {}; render();
+}
+
+// =========================================================================
+// AVISOS: notificaciones en la app + correos
+// Sin servidor no se pueden enviar correos ni avisos a otro dispositivo: cada aviso se guarda en el buzón
+// del destinatario (lo ve al entrar) y, si está usando la app, se muestra también como notificación del sistema.
+// =========================================================================
+const itemsText = (items) => SIZES.filter(s => items?.[s]).map(s => `${s}×${items[s]}`).join(', ');
+const unread = () => db.notifications.filter(n => n.to === ui.sessionId && !n.read).length;
+
+function sysNotify(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'rfw-' + Date.now() };
+  (navigator.serviceWorker?.getRegistration() ?? Promise.resolve(null))
+    .then(reg => reg ? reg.showNotification(title, opts) : new Notification(title, opts))
+    .catch(() => { try { new Notification(title, opts); } catch {} });
+}
+function sendNotif(user, title, body, orderId) {
+  db.notifications.push({ id: uid('n'), to: user.id, title, body, orderId, at: new Date().toISOString(), read: false });
+  if (user.id === ui.sessionId) sysNotify(title, body);
+}
+function sendMail(user, subject, body, orderId) {
+  db.emails.push({ id: uid('e'), toUserId: user.id, to: user.email, subject, body: `Hola ${user.name.split(' ')[0]}:\n\n${body}\n\n— ${APP_NAME}`, orderId, at: new Date().toISOString() });
+}
+function alertAdmins(kind, order, subject, body) {
+  db.users.filter(u => u.role === 'admin' && u.active).forEach(a => {
+    if (db.settings.alertNotif) sendNotif(a, subject, body.split('\n')[0], order.id);
+    if (db.settings.alertEmail) sendMail(a, `[${APP_NAME}] ${subject}`, body + '\n\nRevisa el pedido en la pestaña Pedidos.', order.id);
+  });
+}
+function confirmText(o, eta) {
+  return `Tu pedido de ${o.modelName} (${itemsText(o.items)}) está confirmado.` + (eta ? `\nTiempo estimado de entrega: ${eta}.` : '') + '\nGracias por tu pedido.';
+}
+
+function inboxSheet() {
+  const tab = ui.inboxTab || 'notif';
+  const notifs = db.notifications.filter(n => n.to === ui.sessionId).sort((a, b) => b.at.localeCompare(a.at));
+  const mails = db.emails.filter(e => e.toUserId === ui.sessionId).sort((a, b) => b.at.localeCompare(a.at));
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const tabBtn = (k, l, n) => `<button onclick="App.inboxTab('${k}')" class="flex-1 py-2 text-sm font-semibold rounded-lg ${tab === k ? 'bg-white shadow-sm text-brand-700' : 'text-slate-500'}">${l}${n ? ` <span class="ml-1 rounded-full bg-rose-500 text-white text-[10px] px-1.5">${n}</span>` : ''}</button>`;
+  return `
+    <div class="flex items-center px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10"><h2 class="font-bold text-lg flex-1">Buzón</h2><button onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
+    <div class="p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] space-y-3">
+      ${perm === 'default' ? `<div class="flex items-center gap-3 rounded-xl bg-cream-100 px-3 py-2.5"><span class="text-sm flex-1">Recibe también los avisos como notificaciones de ${isMobile() ? 'tu móvil' : 'tu ordenador'}.</span><button class="${btnP} !py-1.5 shrink-0" onclick="App.enableSysNotif()">Activar</button></div>` : ''}
+      ${perm === 'denied' ? '<p class="text-xs text-slate-500">Las notificaciones del sistema están bloqueadas en este navegador. Puedes permitirlas desde los ajustes del sitio.</p>' : ''}
+      <div class="flex gap-1 rounded-xl bg-slate-100 p-1">${tabBtn('notif', 'Notificaciones', unread())}${tabBtn('mail', 'Correo', 0)}</div>
+      ${tab === 'notif' ? `
+        ${notifs.some(n => !n.read) ? `<button class="text-xs font-semibold text-brand-700" onclick="App.readAll()">Marcar todo como leído</button>` : ''}
+        <div class="grid gap-2">${notifs.map(n => `<button onclick="App.openNotif('${n.id}')" class="text-left rounded-xl ring-1 px-3 py-2.5 ${n.read ? 'ring-slate-100 bg-white' : 'ring-brand-100 bg-brand-50/60'}">
+          <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full ${n.read ? 'bg-transparent' : 'bg-rose-500'} shrink-0"></span><span class="font-semibold text-sm flex-1">${esc(n.title)}</span><span class="text-[11px] text-slate-400 shrink-0">${fmtDate(n.at)}</span></div>
+          <div class="text-sm text-slate-600 mt-0.5 pl-4">${esc(n.body)}</div></button>`).join('') || '<p class="text-sm text-slate-400 text-center py-8">No tienes notificaciones.</p>'}</div>`
+      : `
+        <p class="text-xs text-slate-400">Copia de los correos enviados a ${esc(me().email)}.</p>
+        <div class="grid gap-2">${mails.map(e => `<details class="rounded-xl ring-1 ring-slate-200 bg-white"><summary class="cursor-pointer px-3 py-2.5 list-none"><div class="flex gap-2"><span class="font-semibold text-sm flex-1">${esc(e.subject)}</span><span class="text-[11px] text-slate-400 shrink-0">${fmtDate(e.at)}</span></div><div class="text-xs text-slate-500">Para: ${esc(e.to)}</div></summary>
+          <pre class="whitespace-pre-wrap font-sans text-sm text-slate-700 px-3 pb-3 border-t border-slate-100 pt-2">${esc(e.body)}</pre></details>`).join('') || '<p class="text-sm text-slate-400 text-center py-8">No hay correos.</p>'}</div>`}
+    </div>`;
+}
+
+function confirmForm(o) {
+  const u = userById(o.userId), c = o.confirmation, eta = c?.eta || '';
+  return `
+    <form onsubmit="event.preventDefault();App.sendConfirmation('${o.id}',this)">
+      <div class="flex items-center px-5 py-4 border-b border-slate-100"><h2 class="font-bold text-lg flex-1">Confirmar pedido</h2><button type="button" onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
+      <div class="p-5 space-y-4">
+        <div class="rounded-xl bg-slate-50 px-3 py-2.5 text-sm"><b>${esc(u?.name)}</b> · ${esc(o.modelName)}<div class="mt-1">${sizeChips(o.items)} ${badge(o.status)}</div></div>
+        <div>
+          <label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="withEta" class="accent-brand-600 w-4 h-4" ${eta ? 'checked' : ''} onchange="this.form.eta.disabled=!this.checked;App.refreshConfirmText(this.form,'${o.id}')"> Indicar tiempo estimado de entrega</label>
+          <input name="eta" list="eta-opts" class="${input} mt-2" placeholder="p. ej. 2-3 semanas" value="${esc(eta)}" ${eta ? '' : 'disabled'} oninput="App.refreshConfirmText(this.form,'${o.id}')">
+          <datalist id="eta-opts"><option value="1 semana"><option value="2-3 semanas"><option value="1 mes"><option value="4-6 semanas"></datalist>
+        </div>
+        <div><label class="text-xs font-semibold text-slate-600">Mensaje para ${esc(u?.name.split(' ')[0])}</label><textarea name="message" rows="4" class="${input} mt-1" oninput="this.dataset.edited=1">${esc(c?.message || confirmText(o, eta))}</textarea></div>
+        <div class="grid sm:grid-cols-2 gap-2">
+          <label class="flex items-center gap-2 rounded-xl ring-1 ring-slate-200 px-3 py-2.5 text-sm"><input type="checkbox" name="viaNotif" class="accent-brand-600 w-4 h-4" checked> Enviar notificación</label>
+          <label class="flex items-center gap-2 rounded-xl ring-1 ring-slate-200 px-3 py-2.5 text-sm"><input type="checkbox" name="viaEmail" class="accent-brand-600 w-4 h-4" checked> Enviar email a ${esc(u?.email)}</label>
+        </div>
+        ${c ? `<p class="text-xs text-slate-500">Ya confirmado el ${fmtDate(c.at)}. Volver a enviarlo actualiza el mensaje y el plazo.</p>` : ''}
+      </div>
+      <div class="flex flex-wrap justify-end gap-2 px-5 py-4 border-t border-slate-100">
+        <button type="button" class="${btnS}" onclick="App.mailtoConfirmation('${o.id}',this.form)" title="Abre tu programa de correo con el mensaje preparado">Abrir en mi correo</button>
+        <button class="${btnP}">${c ? 'Actualizar confirmación' : 'Confirmar pedido'}</button>
+      </div>
+    </form>`;
+}
+const confirmChip = (o) => o.confirmation ? `<span class="inline-flex items-center whitespace-nowrap rounded-full bg-brand-50 text-brand-700 ring-1 ring-brand-100 px-2 py-0.5 text-xs font-semibold">✓ Confirmado${o.confirmation.eta ? ` · ${esc(o.confirmation.eta)}` : ''}</span>` : '';
+const bellBtn = () => { const n = unread(); return `<button class="relative grid place-items-center w-10 h-10 rounded-xl hover:bg-slate-100 text-slate-600" onclick="App.openInbox()" aria-label="Buzón${n ? `: ${n} sin leer` : ''}">
+  <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>
+  ${n ? `<span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] grid place-items-center rounded-full bg-rose-500 text-white text-[10px] font-bold px-1">${n > 9 ? '9+' : n}</span>` : ''}</button>`; };
+
+// =========================================================================
+// INSTALACIÓN (PWA)
+// =========================================================================
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (me()) render(); });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('App instalada'); render(); });
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isMobile = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
+const canInstall = () => !isStandalone() && location.protocol !== 'file:';
+
+function installSheet() {
+  const where = isMobile() ? 'tu móvil' : 'tu ordenador';
+  let how;
+  if (installEvt) how = `<button class="${btnP} w-full !py-3" onclick="App.doInstall()">${ic.install} Instalar ahora</button>`;
+  else if (isIOS()) how = `<ol class="space-y-2.5 text-sm text-slate-700">
+      <li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">1</span><span>Abre esta página en <b>Safari</b> y pulsa el botón <b>Compartir</b> <svg class="inline w-4 h-4 -mt-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M8 7l4-4 4 4M5 12v8h14v-8"/></svg>.</span></li>
+      <li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">2</span><span>Elige <b>«Añadir a pantalla de inicio»</b>.</span></li>
+      <li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">3</span><span>Pulsa <b>Añadir</b>: el icono aparecerá junto a tus apps.</span></li></ol>`;
+  else if (isMobile()) how = `<p class="text-sm text-slate-700">Abre el menú del navegador <b>⋮</b> y elige <b>«Instalar aplicación»</b> o <b>«Añadir a pantalla de inicio»</b>.</p>`;
+  else how = `<p class="text-sm text-slate-700">En <b>Chrome</b> o <b>Edge</b>, pulsa el icono de instalar <span class="inline-grid place-items-center w-5 h-5 rounded ring-1 ring-slate-300 text-xs align-middle">⊕</span> a la derecha de la barra de direcciones, o abre el menú <b>⋮</b> → <b>«Instalar Retro Football Wear»</b>.</p>`;
+  return `
+    <div class="p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+      <div class="sm:hidden mx-auto w-10 h-1 rounded-full bg-slate-200 mb-4"></div>
+      <div class="flex items-center gap-4 mb-4">
+        <span class="grid place-items-center w-16 h-16 rounded-2xl bg-cream-100 ring-1 ring-cream-200 shrink-0">${logoIcon('w-12 h-12')}</span>
+        <div><h2 class="font-bold text-lg leading-tight">Instala ${APP_NAME}</h2><p class="text-sm text-slate-500">Tenla en ${where} como una app más: acceso directo, pantalla completa y carga rápida.</p></div>
+      </div>
+      ${how}
+      <button class="${btnS} w-full mt-3" onclick="App.closeModal()">Ahora no</button>
+      <p class="text-xs text-slate-400 mt-3 text-center">Puedes instalarla más tarde desde ${isMobile() ? 'tu perfil (arriba a la derecha)' : 'el botón «Instalar app» de la cabecera'}.</p>
+    </div>`;
+}
+// Se ofrece una sola vez por usuario y dispositivo, al iniciar sesión por primera vez.
+function offerInstallOnce() {
+  const u = me(), key = 'rfw_install_offered_' + u?.id;
+  if (!u || !canInstall() || store.getItem(key)) return;
+  store.setItem(key, new Date().toISOString());
+  setTimeout(() => { if (me()?.id === u.id && !document.getElementById('modal-root').innerHTML) openModal(installSheet()); }, 700);
+}
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW no registrado', e)));
+}
+
+// =========================================================================
+// CSV
+// =========================================================================
+function downloadCsv(name, rows) {
+  const csv = '﻿' + rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// =========================================================================
+// ACCIONES
+// =========================================================================
+const App = {
+  closeModal,
+  go(tab) { ui.tab = tab; render(); window.scrollTo({ top: 0 }); },
+  async login(form) {
+    const btnEl = form.querySelector('button'), id = form.username.value.trim();
+    btnEl.disabled = true; btnEl.textContent = 'Entrando…';
+    try {
+      let email = id;
+      if (!id.includes('@')) {
+        const { data, error } = await sb.rpc('email_for_username', { p_username: id });
+        if (error) throw error;
+        email = data;
+      }
+      if (!email) throw new Error('Usuario o contraseña incorrectos');
+      const { data, error } = await sb.auth.signInWithPassword({ email, password: form.password.value });
+      if (error) throw new Error(/invalid/i.test(error.message) ? 'Usuario o contraseña incorrectos' : error.message);
+      await enterSession(data.user.id, true);
+    } catch (e) {
+      toast(e.message || 'No se pudo iniciar sesión', 'error');
+      btnEl.disabled = false; btnEl.textContent = 'Entrar';
+    }
+  },
+  async forgotPassword() {
+    const typed = document.querySelector('#login-form [name=username]')?.value.trim() || '';
+    const email = (prompt('Escribe el email de tu cuenta y te enviaremos un enlace para crear una contraseña nueva:', typed.includes('@') ? typed : '') || '').trim();
+    if (!email) return;
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    if (error) return toast(error.message, 'error');
+    toast('Si el email existe, recibirás un enlace en unos minutos (revisa también el spam).', 'info');
+  },
+  async setNewPassword(form) {
+    const p1 = form.p1.value, p2 = form.p2.value;
+    if (p1.length < 6) return toast('La contraseña debe tener al menos 6 caracteres', 'error');
+    if (p1 !== p2) return toast('Las contraseñas no coinciden', 'error');
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) return toast(error.message, 'error');
+    ui.recovery = false; closeModal(); toast('Contraseña guardada');
+  },
+  changePassword() { openModal(newPasswordForm(false)); },
+  profileSheet() { openModal(profileSheet()); },
+  showInstall() { openModal(installSheet()); },
+  async doInstall() {
+    if (!installEvt) return openModal(installSheet());
+    installEvt.prompt();
+    const { outcome } = await installEvt.userChoice;
+    installEvt = null; closeModal(); render();
+    if (outcome !== 'accepted') toast('Instalación cancelada', 'info');
+  },
+
+  // --- buzón y avisos ---
+  openInbox() { openModal(inboxSheet()); },
+  inboxTab(t) { ui.inboxTab = t; openModal(inboxSheet()); },
+  readAll() { db.notifications.forEach(n => { if (n.to === ui.sessionId) n.read = true; }); save(); render(); openModal(inboxSheet()); },
+  openNotif(id) {
+    const n = db.notifications.find(x => x.id === id); n.read = true; save();
+    closeModal(); App.go(me().role === 'admin' ? 'pedidos' : 'mis');
+  },
+  async enableSysNotif() {
+    const p = await Notification.requestPermission();
+    if (p === 'granted') sysNotify(APP_NAME, 'Avisos activados: te avisaremos de las novedades de tus pedidos.');
+    openModal(inboxSheet());
+  },
+  confirmOrder(oid) { openModal(confirmForm(db.orders.find(o => o.id === oid))); },
+  refreshConfirmText(form, oid) { // mientras el admin no edite el mensaje, se rehace con el plazo indicado
+    if (form.message.dataset.edited) return;
+    form.message.value = confirmText(db.orders.find(o => o.id === oid), form.withEta.checked ? form.eta.value.trim() : '');
+  },
+  sendConfirmation(oid, form) {
+    const o = db.orders.find(x => x.id === oid), u = userById(o.userId);
+    const eta = form.withEta.checked ? form.eta.value.trim() : '';
+    if (form.withEta.checked && !eta) return toast('Indica el tiempo estimado o desmarca la opción', 'error');
+    const message = form.message.value.trim(), viaNotif = form.viaNotif.checked, viaEmail = form.viaEmail.checked;
+    o.confirmation = { at: new Date().toISOString(), byUserId: ui.sessionId, eta: eta || null, message, viaNotif, viaEmail };
+    const title = `Pedido confirmado: ${o.modelName}`;
+    if (u && viaNotif) sendNotif(u, title, eta ? `Entrega estimada: ${eta}` : 'El administrador ha confirmado tu pedido.', o.id);
+    if (u && viaEmail) sendMail(u, `[${APP_NAME}] ${title}`, message, o.id);
+    save(); closeModal(); render();
+    toast(viaNotif || viaEmail ? `Confirmación enviada a ${u?.name}` : 'Pedido marcado como confirmado (sin avisar)');
+  },
+  mailtoConfirmation(oid, form) {
+    const o = db.orders.find(x => x.id === oid), u = userById(o.userId);
+    const subject = `[${APP_NAME}] Pedido confirmado: ${o.modelName}`;
+    const body = `Hola ${u.name.split(' ')[0]}:\n\n${form.message.value.trim()}\n\n— ${APP_NAME}`;
+    location.href = `mailto:${encodeURIComponent(u.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  },
+  async logout() {
+    if (rtChannel) { sb.removeChannel(rtChannel); rtChannel = null; }
+    await syncChain;
+    await sb.auth.signOut();
+    ui.sessionId = null; ui.tab = null; ui.sel = {}; db = emptyDb(); render();
+  },
+
+  // --- usuario ---
+  pickImg(mid, i) { ui.sel[mid].img = i; render(); },
+  step(mid, size, delta) {
+    const m = modelById(mid), s = selFor(m);
+    const next = Math.max(0, (s.items[size] || 0) + delta);
+    if (delta > 0 && units(s.items) + 1 > db.settings.maxUnits) return toast(`Máximo ${db.settings.maxUnits} unidades por modelo`, 'error');
+    s.items[size] = next; render();
+  },
+  saveOrder(mid) {
+    const m = modelById(mid), s = selFor(m), items = cleanItems(s.items);
+    if (!units(items)) return toast('Selecciona al menos una talla', 'error');
+    let o = myOrderFor(mid);
+    if (o?.status === 'pagado') return toast('Este pedido ya está pagado y no se puede modificar', 'error');
+    const now = new Date().toISOString();
+    if (o) { o.items = items; o.unitPrice = m.price; o.modelName = m.name; o.updatedAt = now; o.confirmation = null; toast('Pedido actualizado');
+      alertAdmins('pedido', o, `Pedido modificado: ${m.name}`, `${me().name} ha modificado su pedido de ${m.name}.
+Ahora: ${itemsText(items)} · ${money(orderTotal(o))} · pendiente de pago.`); }
+    else { db.orders.push({ id: uid('o'), userId: ui.sessionId, modelId: mid, modelName: m.name, unitPrice: m.price, items, status: 'pendiente', createdAt: now, updatedAt: now, payment: null }); toast('¡Solicitud enviada al administrador!');
+      const no = db.orders.at(-1);
+      alertAdmins('pedido', no, `Nuevo pedido: ${m.name}`, `${me().name} ha solicitado ${m.name} (${catName(catOf(m))}).
+Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`); }
+    save(); render();
+  },
+  cancelOrder(oid) {
+    const o = db.orders.find(x => x.id === oid);
+    if (!o || o.status === 'pagado' || !confirm('¿Cancelar este pedido?')) return;
+    db.orders = db.orders.filter(x => x.id !== oid); delete ui.sel[o.modelId]; save(); render(); toast('Pedido cancelado', 'info');
+  },
+  async pay(oid) {
+    const o = db.orders.find(x => x.id === oid), u = me(), m = modelById(o.modelId);
+    const cid = db.settings.paypalClientId.trim();
+    openModal(`
+      <div class="flex items-center px-5 py-4 border-b border-slate-100"><div class="text-2xl flex-1">${paypalLogo}</div><span class="text-xs text-slate-400 mr-3">${cid ? 'Sandbox' : 'Simulación'}</span><button onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
+      <div class="p-5" id="pp-body">
+        <div class="flex gap-3 items-center bg-slate-50 rounded-2xl p-3 mb-4">
+          <div class="w-12 h-14 rounded-lg overflow-hidden bg-white">${imgTag(m?.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}</div>
+          <div class="flex-1"><div class="font-semibold text-sm">${esc(o.modelName)}</div><div class="mt-0.5">${sizeChips(o.items)}</div></div>
+          <div class="text-right"><div class="text-xs text-slate-500">Total</div><div class="font-bold text-lg">${money(orderTotal(o))}</div></div>
+        </div>
+        ${cid ? `<div id="pp-buttons" class="min-h-[50px]"><p class="text-sm text-slate-500 text-center py-4">Cargando PayPal…</p></div>`
+              : `<div class="space-y-3">
+                  <div><label class="text-xs font-semibold text-slate-600">Cuenta PayPal</label><input id="pp-email" type="email" class="${input} mt-1" value="${esc(u.email)}"></div>
+                  <p class="text-xs text-slate-500">Pago simulado: no se realiza ningún cargo real. Se registrará que <b>${esc(u.name)}</b> ha pagado este pedido.</p>
+                  <button id="pp-go" class="w-full rounded-full bg-[#ffc439] hover:bg-[#f2b72f] py-3 text-lg font-bold" onclick="App.simulatePay('${o.id}')">Pagar con ${paypalLogo}</button>
+                </div>`}
+      </div>`);
+    if (!cid) return;
+    try {
+      await loadPaypalSdk(cid, db.settings.currency);
+      document.getElementById('pp-buttons').innerHTML = '';
+      window.paypal.Buttons({
+        style: { layout: 'vertical', shape: 'pill', label: 'pay' },
+        createOrder: (_, actions) => actions.order.create({ purchase_units: [{ reference_id: o.id, description: `${o.modelName} (${Object.entries(o.items).map(([k, v]) => k + 'x' + v).join(', ')})`.slice(0, 127), custom_id: u.id, amount: { currency_code: db.settings.currency, value: orderTotal(o).toFixed(2) } }] }),
+        onApprove: async (_, actions) => {
+          const det = await actions.order.capture();
+          const cap = det.purchase_units?.[0]?.payments?.captures?.[0];
+          registerPayment(o.id, { txId: cap?.id || det.id, method: 'PayPal Sandbox', payerEmail: det.payer?.email_address, payerName: [det.payer?.name?.given_name, det.payer?.name?.surname].filter(Boolean).join(' ') });
+          paySuccess(o, cap?.id || det.id);
+        },
+        onError: (err) => { console.error(err); toast('PayPal devolvió un error. Revisa el Client ID.', 'error'); },
+      }).render('#pp-buttons');
+    } catch (e) {
+      document.getElementById('pp-buttons').innerHTML = `<p class="text-sm text-rose-600 text-center py-4">${esc(e.message)}. Comprueba el Client ID en Ajustes o déjalo vacío para usar la simulación.</p>`;
+    }
+  },
+  simulatePay(oid) {
+    const email = document.getElementById('pp-email').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Introduce un email de PayPal válido', 'error');
+    const b = document.getElementById('pp-go'); b.disabled = true; b.innerHTML = 'Procesando pago…';
+    setTimeout(() => {
+      const txId = 'SIM-' + Math.random().toString(36).slice(2, 12).toUpperCase();
+      registerPayment(oid, { txId, method: 'PayPal (simulado)', payerEmail: email });
+      paySuccess(db.orders.find(x => x.id === oid), txId);
+    }, 1300);
+  },
+
+  // --- admin: panel / pedidos ---
+  setPanelPaid(v) { ui.panelPaidOnly = v; render(); },
+  filter(k, v) {
+    ui.filters[k] = v; render();
+    if (k === 'q') { const el = document.getElementById('f-q'); el.focus(); el.setSelectionRange(v.length, v.length); }
+  },
+  markPaidManual(oid) {
+    const o = db.orders.find(x => x.id === oid), u = userById(o.userId), admin = me();
+    if (!confirm(`¿Marcar como pagado el pedido de ${u?.name}? (p. ej. pago en efectivo)`)) return;
+    o.payment = { txId: 'MANUAL-' + Date.now().toString(36).toUpperCase(), method: `Manual (registrado por ${admin.name})`, payerEmail: u?.email || '', payerName: u?.name || '', paidByUserId: o.userId, amount: orderTotal(o), paidAt: new Date().toISOString() };
+    o.status = 'pagado';
+    db.payments.push({ id: uid('p'), orderId: o.id, userId: o.userId, ...o.payment });
+    save(); render(); toast('Pedido marcado como pagado');
+  },
+  markPending(oid) {
+    const o = db.orders.find(x => x.id === oid);
+    if (!confirm('¿Volver a dejar este pedido como pendiente? El pago quedará anulado en el registro.')) return;
+    db.payments.filter(p => p.orderId === oid && !p.revoked).forEach(p => p.revoked = true);
+    o.status = 'pendiente'; o.payment = null; save(); render(); toast('Pedido marcado como pendiente', 'info');
+  },
+  deleteOrder(oid) {
+    if (!confirm('¿Eliminar este pedido definitivamente?')) return;
+    db.orders = db.orders.filter(x => x.id !== oid); save(); render(); toast('Pedido eliminado', 'info');
+  },
+  exportBatch() {
+    const os = db.orders.filter(o => !ui.panelPaidOnly || o.status === 'pagado');
+    const rows = [['Tipo', 'Modelo', ...SIZES, 'Total', 'Usuarios']];
+    [...db.models].filter(m => inCat(m, ui.panelCat)).sort((a, b) => catName(catOf(a)).localeCompare(catName(catOf(b)))).forEach(m => {
+      const mo = os.filter(o => o.modelId === m.id); if (!mo.length) return;
+      rows.push([catName(catOf(m)), m.name, ...SIZES.map(s => mo.reduce((a, o) => a + (o.items[s] || 0), 0)), mo.reduce((a, o) => a + units(o.items), 0), new Set(mo.map(o => o.userId)).size]);
+    });
+    downloadCsv(`lote-fabricacion${ui.panelPaidOnly ? '-pagados' : ''}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  },
+  exportOrders() {
+    const rows = [['Fecha', 'Usuario', 'Email', 'Tipo', 'Modelo', ...SIZES, 'Unidades', 'Importe', 'Estado', 'Pagado por', 'Cuenta PayPal', 'Método', 'Transacción', 'Fecha pago']];
+    filteredOrders().forEach(o => {
+      const u = userById(o.userId), p = o.payment;
+      rows.push([fmtDate(o.createdAt), u?.name, u?.email, catName(catOf(modelById(o.modelId))), o.modelName, ...SIZES.map(s => o.items[s] || 0), units(o.items), orderTotal(o).toFixed(2).replace('.', ','), o.status, p ? (userById(p.paidByUserId)?.name || p.payerName) : '', p?.payerEmail, p?.method, p?.txId, p ? fmtDate(p.paidAt) : '']);
+    });
+    downloadCsv(`pedidos-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  },
+
+  // --- admin: modelos ---
+  editModel(id) {
+    const m = id ? modelById(id) : null;
+    ui.draft = m ? JSON.parse(JSON.stringify(m)) : { categoryId: ui.modelCat && ui.modelCat !== NO_CAT ? ui.modelCat : '', name: '', description: '', price: 15, sizes: [...SIZES], images: [], color: '#e2e8f0', ink: '#334155' };
+    if (ui.draft.categoryId && catOf(ui.draft) === NO_CAT) ui.draft.categoryId = '';
+    openModal(modelForm(), true);
+  },
+  draftSet(k, v) { ui.draft[k] = v; },
+  draftCat(v) {
+    if (v !== '__new') { ui.draft.categoryId = v; return; }
+    const name = (prompt('Nombre del nuevo tipo de modelo:') || '').trim();
+    const c = name && App.addCat(name, true);
+    if (c) ui.draft.categoryId = c.id;
+    App.draftRerender();
+  },
+  // --- admin: tipos de modelo ---
+  setCat(id) { ui.cat = id; ui.catModel = ''; render(); },
+  catalogFilter(k, v) {
+    ui[k] = v; render();
+    if (k === 'catQ') { const el = document.getElementById('cat-q'); el.focus(); el.setSelectionRange(v.length, v.length); }
+  },
+  clearCatalogFilters() { ui.cat = ''; ui.catQ = ''; ui.catModel = ''; render(); },
+  setModelCat(id) { ui.modelCat = id; render(); },
+  setPanelCat(id) { ui.panelCat = id; render(); },
+  manageCats() { openModal(catsForm()); },
+  addCat(name, silent) {
+    name = name.trim();
+    if (!name) return null;
+    const dup = db.categories.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (dup) { toast('Ese tipo ya existe', 'error'); return dup; }
+    const c = { id: uid('c'), name };
+    db.categories.push(c); save(); render();
+    if (!silent) { openModal(catsForm()); toast(`Tipo «${name}» añadido`); }
+    return c;
+  },
+  renameCat(id, name) {
+    name = name.trim();
+    if (!name) return openModal(catsForm());
+    if (db.categories.some(c => c.id !== id && c.name.toLowerCase() === name.toLowerCase())) { toast('Ese tipo ya existe', 'error'); return openModal(catsForm()); }
+    db.categories.find(c => c.id === id).name = name; save(); render(); toast('Tipo renombrado');
+  },
+  deleteCat(id) {
+    const c = db.categories.find(x => x.id === id), n = db.models.filter(m => !m.deletedAt && m.categoryId === id).length;
+    if (n) return toast(`«${c.name}» lo usan ${n} modelo(s). Cámbialos de tipo antes de eliminarlo.`, 'error');
+    if (!confirm(`¿Eliminar el tipo «${c.name}»?`)) return;
+    db.categories = db.categories.filter(x => x.id !== id);
+    for (const k of ['cat', 'modelCat', 'panelCat']) if (ui[k] === id) ui[k] = '';
+    if (ui.filters.cat === id) ui.filters.cat = '';
+    save(); render(); openModal(catsForm()); toast('Tipo eliminado', 'info');
+  },
+  draftSize(s, on) { ui.draft.sizes = on ? SIZES.filter(x => x === s || ui.draft.sizes.includes(x)) : ui.draft.sizes.filter(x => x !== s); },
+  draftRerender() { const st = document.querySelector('#modal-root .overflow-y-auto')?.scrollTop; openModal(modelForm(), true); const box = document.querySelector('#modal-root .overflow-y-auto'); if (box) box.scrollTop = st || 0; },
+  draftCover(i) { const [x] = ui.draft.images.splice(i, 1); ui.draft.images.unshift(x); App.draftRerender(); },
+  draftRemoveImg(i) { ui.draft.images.splice(i, 1); App.draftRerender(); },
+  draftAddUrl() {
+    const v = document.getElementById('img-url').value.trim();
+    if (!/^https?:\/\/\S+$/i.test(v)) return toast('Introduce una URL https:// válida', 'error');
+    ui.draft.images.push(v); App.draftRerender();
+  },
+  async uploadImgs(files) {
+    const enhance = ui.enhance !== false, st = document.getElementById('upload-status');
+    for (const [i, f] of [...files].entries()) {
+      st.textContent = `${enhance ? 'Mejorando' : 'Procesando'} foto ${i + 1} de ${files.length}…`;
+      try {
+        const dataUrl = await enhanceImage(f, enhance);
+        st.textContent = `Subiendo foto ${i + 1} de ${files.length}…`;
+        ui.draft.images.push(await uploadPhoto(dataUrl));
+      } catch (e) { toast(`${f.name}: ${e.message}`, 'error'); }
+    }
+    App.draftRerender();
+    toast(enhance ? 'Fotos mejoradas y subidas' : 'Fotos subidas');
+  },
+  saveModel() {
+    const d = ui.draft, price = parseFloat(String(d.price).replace(',', '.'));
+    if (!d.categoryId) return toast('Elige el tipo de modelo', 'error');
+    if (!d.name.trim()) return toast('El nombre es obligatorio', 'error');
+    if (!(price >= 0)) return toast('Precio no válido', 'error');
+    if (!d.sizes.length) return toast('Marca al menos una talla', 'error');
+    if (!d.images.length) return toast('Añade al menos una foto', 'error');
+    const data = { categoryId: d.categoryId, name: d.name.trim(), description: d.description.trim(), price, sizes: d.sizes, images: d.images };
+    const backup = JSON.stringify(db.models);
+    if (d.id) {
+      Object.assign(modelById(d.id), data);
+      db.orders.filter(o => o.modelId === d.id && o.status !== 'pagado').forEach(o => { o.modelName = data.name; o.unitPrice = price; });
+      db.orders.filter(o => o.modelId === d.id).forEach(o => o.modelName = data.name);
+    } else db.models.push({ id: uid('m'), color: d.color, ink: d.ink, createdAt: new Date().toISOString(), ...data });
+    if (!save()) { db.models = JSON.parse(backup); return; }
+    closeModal(); ui.sel = {}; render(); toast(d.id ? 'Modelo actualizado' : 'Modelo publicado en el catálogo');
+  },
+  deleteModel(id) {
+    const m = modelById(id), n = db.orders.filter(o => o.modelId === id).length;
+    if (!confirm(`¿Eliminar «${m.name}» del catálogo?${n ? `\n\nTiene ${n} pedido(s): se conservarán en el historial y en el panel, pero los usuarios ya no podrán pedirlo.` : ''}`)) return;
+    if (n) { m.deletedAt = new Date().toISOString(); m.images = m.images.slice(0, 1); } // se conserva la portada para el historial
+    else db.models = db.models.filter(x => x.id !== id);
+    save(); render(); toast('Modelo eliminado', 'info');
+  },
+
+  // --- admin: usuarios ---
+  editUser(id) { openModal(userForm(id ? userById(id) : null)); },
+  // Las cuentas se gestionan con funciones seguras de la base de datos (solo las puede usar un administrador).
+  async saveUser(form, id) {
+    const f = Object.fromEntries(new FormData(form)), u = id ? userById(id) : null;
+    const { error } = await sb.rpc('admin_save_user', {
+      p_id: id || null, p_email: f.email.trim(), p_password: f.password || null, p_name: f.name.trim(),
+      p_username: f.username.trim(), p_role: f.role || u?.role || 'user', p_active: u ? u.active : true,
+    });
+    if (error) return toast(error.message, 'error');
+    await fetchAll(); closeModal(); render();
+    toast(id ? 'Usuario actualizado' : `Usuario @${f.username.trim()} creado`);
+  },
+  async toggleUser(id) {
+    const u = userById(id);
+    const { error } = await sb.rpc('admin_save_user', { p_id: id, p_email: u.email, p_password: null, p_name: u.name, p_username: u.username, p_role: u.role, p_active: !u.active });
+    if (error) return toast(error.message, 'error');
+    await fetchAll(); render(); toast(u.active ? 'Usuario desactivado' : 'Usuario activado', 'info');
+  },
+  async deleteUser(id) {
+    const u = userById(id), n = db.orders.filter(o => o.userId === id).length;
+    if (!confirm(`¿Eliminar a ${u.name}?${n ? `\nSus ${n} pedido(s) también se eliminarán (el registro de pagos se conserva).` : ''}`)) return;
+    const { error } = await sb.rpc('admin_delete_user', { p_id: id });
+    if (error) return toast(error.message, 'error');
+    await fetchAll(); render(); toast('Usuario eliminado', 'info');
+  },
+
+  // --- admin: ajustes ---
+  saveSettings(form) {
+    const f = Object.fromEntries(new FormData(form));
+    db.settings.maxUnits = Math.max(1, parseInt(f.maxUnits) || 5);
+    db.settings.alertNotif = !!f.alertNotif; db.settings.alertEmail = !!f.alertEmail;
+    db.settings.currency = f.currency;
+    db.settings.paypalClientId = f.paypalClientId.trim();
+    save(); render(); toast('Ajustes guardados');
+  },
+};
+window.App = App;
+
+// =========================================================================
+// ARRANQUE Y SESIÓN
+// =========================================================================
+async function enterSession(userId, fresh) {
+  ui.sessionId = userId; ui.loading = true; ui.tab = null; ui.sel = {}; render();
+  try { await fetchAll(); }
+  catch (e) { console.error(e); toast('No se pudieron cargar los datos: ' + e.message, 'error'); }
+  ui.loading = false;
+  const u = me();
+  if (!u) {
+    await sb.auth.signOut(); ui.sessionId = null; db = emptyDb(); render();
+    return toast('Esta cuenta está desactivada. Habla con el administrador.', 'error');
+  }
+  render(); subscribeRealtime();
+  if (fresh) toast(`Hola, ${u.name.split(' ')[0]}`, 'info');
+  const n = unread(); if (n) sysNotify(APP_NAME, `Tienes ${n} aviso${n === 1 ? '' : 's'} sin leer.`);
+  if (ui.recovery) openModal(newPasswordForm(true)); else offerInstallOnce();
+}
+sb.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') { ui.recovery = true; if (me()) openModal(newPasswordForm(true)); }
+  if (event === 'SIGNED_OUT' && ui.sessionId) { ui.sessionId = null; db = emptyDb(); render(); }
+});
+(async () => {
+  ui.loading = true; render();
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) await enterSession(session.user.id, false);
+  else { ui.loading = false; render(); }
+})();
+</script>
+</body>
+</html>

@@ -28,3 +28,9 @@ La clave de Supabase que aparece en `index.html` es la pública (*publishable*):
 - **Emails a todos los usuarios:** el servidor de correo incluido en Supabase solo envía a los miembros del equipo del proyecto. Para que lleguen a cualquier usuario hay que configurar un SMTP propio en Supabase (Authentication → Emails → SMTP Settings), por ejemplo Brevo o Resend, que tienen plan gratuito.
 
 Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_contrasenas.sql`.
+
+## Aviso de modelos nuevos
+
+Al publicar un modelo (o con el botón 📣 de cada modelo), todos los usuarios reciben una notificación en la app y el administrador envía un email desde su propio correo: la app lo abre ya redactado con los destinatarios en copia oculta, repartidos en tandas si son muchos.
+
+La Edge Function `supabase/functions/notify-new-model` (envío automático con Brevo) queda desplegada pero sin uso: se puede activar más adelante si se configura un proveedor de correo.

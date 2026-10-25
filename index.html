@@ -361,6 +361,33 @@ function smsSheet(sent) {
         <input name="phone" type="tel" required autocomplete="tel" class="${input}" placeholder="+34 600 000 000">
         <button class="${btnP} w-full">Enviarme el código</button></div></form>`;
 }
+// --- aviso de modelo nuevo por el correo del administrador ---
+// Las cuentas de prueba (@ejemplo.com) no reciben email.
+const isTestEmail = (e) => /@(ejemplo|example)\.(com|org|net)$/i.test(e || '');
+// Los enlaces mailto muy largos fallan en algunos programas de correo: se reparten los destinatarios en tandas.
+function bccBatches(emails, maxChars = 1500) {
+  const out = [];
+  let cur = [], len = 0;
+  for (const e of emails) {
+    if (cur.length && len + e.length + 1 > maxChars) { out.push(cur); cur = []; len = 0; }
+    cur.push(e); len += e.length + 1;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+function announceSheet(m, nUsers) {
+  const a = ui.announce, n = a.batches.reduce((s, b) => s + b.length, 0);
+  return `${sheetHead('Avisar por email')}
+    <div class="p-5 space-y-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      ${m ? `<p class="text-sm text-emerald-700 font-semibold">✓ Notificación enviada en la app a ${nUsers} usuario${nUsers === 1 ? '' : 's'}.</p>` : ''}
+      ${n ? `<p class="text-sm text-slate-600">Ahora envía el email desde tu correo: se abrirá ya redactado, con los ${n} destinatarios en <b>copia oculta</b> (nadie ve las direcciones de los demás). Solo tienes que pulsar «Enviar».</p>
+        <div class="grid gap-2">${a.batches.map((b, i) => `<button class="${a.sent.includes(i) ? btnS : btnP} w-full !py-3" onclick="App.openAnnounceMail(${i})">${a.sent.includes(i) ? '✓ ' : '✉ '}Abrir mi correo${a.batches.length > 1 ? ` · tanda ${i + 1} de ${a.batches.length} (${b.length})` : ''}</button>`).join('')}</div>
+        ${a.batches.length > 1 ? '<p class="text-xs text-slate-400">Son muchos destinatarios para un solo email: envía cada tanda por separado.</p>' : ''}`
+      : '<p class="text-sm text-slate-600">No hay usuarios con email real a los que escribir (las cuentas de prueba no reciben email).</p>'}
+      ${a.skipped ? `<p class="text-xs text-slate-400">${a.skipped} cuenta${a.skipped === 1 ? '' : 's'} de prueba sin email.</p>` : ''}
+      <button class="${btnS} w-full" onclick="App.closeModal()">${a.sent.length === a.batches.length && n ? 'Hecho' : 'Cerrar'}</button>
+    </div>`;
+}
 function newPasswordForm(recovery) {
   return `
     <form onsubmit="event.preventDefault();App.setNewPassword(this)">
@@ -637,7 +664,7 @@ function renderModels() {
             <p class="text-xs text-slate-500 mt-1 line-clamp-2">${esc(m.description)}</p>
             <div class="flex flex-wrap gap-1 mt-2">${SIZES.map(s => `<span class="text-[11px] font-semibold rounded px-1.5 py-0.5 ${m.sizes.includes(s) ? 'bg-slate-100 text-slate-700' : 'text-slate-300 line-through'}">${s}</span>`).join('')}</div>
             <div class="text-xs text-slate-500 mt-2">${n.length} pedidos · ${n.reduce((a, o) => a + units(o.items), 0)} uds.</div>
-            <div class="flex gap-2 mt-3"><button class="${btnS} flex-1" onclick="App.editModel('${m.id}')">${ic.edit} Editar</button><button class="${btnS}" onclick="App.announceModel('${m.id}')" title="Avisar a todos los usuarios por email y notificación" aria-label="Avisar a los usuarios">📣</button><button class="${btnD}" onclick="App.deleteModel('${m.id}')" title="Eliminar modelo obsoleto">${ic.trash}</button></div>
+            <div class="flex gap-2 mt-3"><button class="${btnS} flex-1" onclick="App.editModel('${m.id}')">${ic.edit} Editar</button><button class="${btnS}" onclick="App.announceModel('${m.id}')" title="Avisar a todos los usuarios (notificación y email desde tu correo)" aria-label="Avisar a los usuarios">📣</button><button class="${btnD}" onclick="App.deleteModel('${m.id}')" title="Eliminar modelo obsoleto">${ic.trash}</button></div>
           </div></article>`;
       }).join('') || empty(all.length ? 'No hay modelos de este tipo' : 'No hay modelos publicados', 'Pulsa «Nuevo modelo» para añadir uno.')}
     </div>`;
@@ -696,7 +723,7 @@ function modelForm() {
       </div>
     </div>
     <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 sticky bottom-0 bg-white">
-      ${d.id ? '' : `<label class="mr-auto flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" class="accent-brand-600 w-4 h-4" ${d.notify !== false ? 'checked' : ''} onchange="App.draftSet('notify',this.checked)"> Avisar a todos los usuarios (email y notificación)</label>`}
+      ${d.id ? '' : `<label class="mr-auto flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" class="accent-brand-600 w-4 h-4" ${d.notify !== false ? 'checked' : ''} onchange="App.draftSet('notify',this.checked)"> Avisar a todos los usuarios (notificación y email desde tu correo)</label>`}
       <button class="${btnS}" onclick="App.closeModal()">Cancelar</button>
       <button class="${btnP}" onclick="App.saveModel()">${d.id ? 'Guardar cambios' : 'Publicar modelo'}</button>
     </div>`;
@@ -1344,23 +1371,35 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     closeModal(); ui.sel = {}; render(); toast(d.id ? 'Modelo actualizado' : 'Modelo publicado en el catálogo');
     if (!d.id && d.notify !== false) App.announceModel(d.newId, true);
   },
-  // Aviso de modelo nuevo: notificación en la app (y copia en el buzón) para cada usuario + email real vía Brevo.
-  async announceModel(id, auto) {
+  // Aviso de modelo nuevo: notificación en la app (y copia en el buzón) para cada usuario, y un email que el
+  // administrador envía desde su propio correo con todos los usuarios en copia oculta (CCO).
+  announceModel(id, auto) {
     const m = modelById(id);
-    if (!auto && !confirm(`¿Avisar a todos los usuarios de «${m.name}» por notificación y email?`)) return;
+    if (!auto && !confirm(`¿Avisar a todos los usuarios de «${m.name}»?`)) return;
     const now = new Date().toISOString(), users = db.users.filter(u => u.active && u.id !== ui.sessionId);
+    const appUrl = location.origin + location.pathname;
     const text = `Ya puedes pedir «${m.name}» (${catName(catOf(m))}, ${money(m.price)}) en el catálogo.`;
+    const body = `${text}\n\n${m.description}\n\nEntra en la app para elegir tu talla: ${appUrl}`;
     users.forEach(u => {
       db.notifications.push({ id: uid('n'), to: u.id, title: `Nuevo modelo: ${m.name}`, body: text, orderId: null, at: now, read: false });
-      sendMail(u, `[${APP_NAME}] Nuevo modelo: ${m.name}`, `${text}\n\n${m.description}\n\nEntra en la app para elegir tu talla: ${location.origin + location.pathname}`, null);
+      sendMail(u, `[${APP_NAME}] Nuevo modelo: ${m.name}`, body, null);
     });
-    save(); await syncChain; // el modelo tiene que estar guardado antes de enviar los emails
-    const { data, error } = await sb.functions.invoke('notify-new-model', { body: { modelId: id, appUrl: location.origin + location.pathname } });
-    let detail = null;
-    if (error) { try { detail = await error.context?.json(); } catch {} }
-    if (!error) toast(`Aviso enviado: ${users.length} notificaciones y ${data.sent} emails${data.skipped ? ` (${data.skipped} cuentas de prueba sin email)` : ''}`);
-    else if (detail?.notConfigured) toast(`Notificaciones enviadas a ${users.length} usuarios. Los emails se enviarán cuando se configure Brevo.`, 'info');
-    else toast(`Notificaciones enviadas, pero falló el email: ${detail?.error || error.message}`, 'error');
+    save();
+    ui.announce = {
+      subject: `Nuevo modelo en ${APP_NAME}: ${m.name}`,
+      body: `Hola:\n\n${body}\n\n— ${APP_NAME}`,
+      batches: bccBatches(users.map(u => u.email).filter(e => e && !isTestEmail(e))),
+      skipped: users.filter(u => isTestEmail(u.email)).length,
+      sent: [],
+    };
+    openModal(announceSheet(m, users.length));
+  },
+  openAnnounceMail(i) {
+    const a = ui.announce;
+    location.href = `mailto:${encodeURIComponent(me().email)}?bcc=${encodeURIComponent(a.batches[i].join(','))}`
+      + `&subject=${encodeURIComponent(a.subject)}&body=${encodeURIComponent(a.body)}`;
+    if (!a.sent.includes(i)) a.sent.push(i);
+    setTimeout(() => openModal(announceSheet(null, null)), 400);
   },
   deleteModel(id) {
     const m = modelById(id), n = db.orders.filter(o => o.modelId === id).length;

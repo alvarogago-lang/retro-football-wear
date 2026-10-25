@@ -19,3 +19,12 @@ App web instalable (PWA) para pedir ropa de fútbol retro: camisetas, pantalones
 - `manifest.webmanifest` + `sw.js` hacen que se pueda instalar y abrir sin conexión.
 
 La clave de Supabase que aparece en `index.html` es la pública (*publishable*): está pensada para usarse en el navegador y las reglas de seguridad de la base de datos limitan lo que cada usuario puede ver y hacer.
+
+## Contraseñas
+
+- Un administrador puede crear cuentas sin contraseña: la primera vez que el usuario intenta entrar recibe un email para crearla. Cualquier administrador puede crear otros administradores.
+- **Recuperación por email:** «¿Olvidaste tu contraseña?» en la pantalla de acceso.
+- **Recuperación por SMS (opcional):** requiere un proveedor de SMS configurado en Supabase (Authentication → Sign In / Providers → Phone) y activar la opción en Ajustes de la app. Las cuentas necesitan teléfono.
+- **Emails a todos los usuarios:** el servidor de correo incluido en Supabase solo envía a los miembros del equipo del proyecto. Para que lleguen a cualquier usuario hay que configurar un SMTP propio en Supabase (Authentication → Emails → SMTP Settings), por ejemplo Brevo o Resend, que tienen plan gratuito.
+
+Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_contrasenas.sql`.

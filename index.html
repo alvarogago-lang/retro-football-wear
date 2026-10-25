@@ -77,7 +77,7 @@ const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], paym
 let db = emptyDb();
 let synced = {}; // copia de lo último leído/escrito en la nube, para enviar solo los cambios
 
-const profileToUser = (p) => ({ id: p.id, name: p.name, username: p.username, email: p.email, role: p.role, active: p.active, createdAt: p.created_at });
+const profileToUser = (p) => ({ id: p.id, name: p.name, username: p.username, email: p.email, phone: p.phone || '', role: p.role, active: p.active, needsPassword: p.needs_password, createdAt: p.created_at });
 
 async function fetchAll() {
   const [pr, st, ...rest] = await Promise.all([
@@ -307,6 +307,59 @@ function renderLogin() {
       ${canInstall() ? `<button class="${btnS} w-full mt-4" onclick="App.showInstall()">${ic.install} Instalar la app</button>` : ''}
     </div>
   </div>`;
+}
+// --- contraseñas: primera contraseña y recuperación por email o SMS ---
+async function accountStatus(identifier) {
+  if (!identifier) return null;
+  const { data, error } = await sb.rpc('login_status', { p_identifier: identifier });
+  if (error) throw error;
+  return data?.[0] || null;
+}
+async function sendRecoveryEmail(email) {
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  if (error) throw new Error(/rate|seconds/i.test(error.message) ? 'Se han enviado demasiados emails seguidos. Espera un poco y vuelve a intentarlo.' : error.message);
+}
+const maskEmail = (e) => e.replace(/^(.{2})[^@]*(@.*)$/, (_, a, b) => a + '•••' + b);
+const normalizePhone = (p) => { const d = String(p || '').replace(/\D/g, ''); return /^\d{9}$/.test(d) ? '34' + d : d; };
+const sheetHead = (title) => `<div class="flex items-center px-5 py-4 border-b border-slate-100"><h2 class="font-bold text-lg flex-1">${title}</h2><button type="button" onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>`;
+
+function firstPasswordSheet(email) {
+  return `${sheetHead('Crea tu contraseña')}
+    <div class="p-5 space-y-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <p class="text-sm text-slate-700">Es tu primer acceso. Te hemos enviado un email a <b>${esc(maskEmail(email))}</b> con un enlace para crear tu contraseña.</p>
+      <p class="text-sm text-slate-500">Abre el enlace en este dispositivo: volverás aquí con la sesión iniciada y podrás elegir tu contraseña.</p>
+      <p class="text-xs text-slate-400">¿No llega? Revisa la carpeta de spam o espera un minuto y vuelve a pulsar «Entrar».</p>
+      <button class="${btnP} w-full" onclick="App.closeModal()">Entendido</button>
+    </div>`;
+}
+function forgotSheet(prefill) {
+  return `<form onsubmit="event.preventDefault();App.forgotLookup(this)">${sheetHead('Recuperar contraseña')}
+    <div class="p-5 space-y-3">
+      <p class="text-sm text-slate-600">Escribe tu usuario o tu email y te ayudamos a crear una contraseña nueva.</p>
+      <input name="ident" required autocapitalize="none" class="${input}" value="${esc(prefill)}" placeholder="usuario o email">
+      <button class="${btnP} w-full">Continuar</button>
+    </div></form>`;
+}
+function forgotChoiceSheet(email) {
+  return `${sheetHead('¿Cómo quieres recuperarla?')}
+    <div class="p-5 grid gap-2 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <button class="${btnS} !justify-start !py-3" onclick="App.forgotByEmail()">✉ Por email a ${esc(maskEmail(email))}</button>
+      <button class="${btnS} !justify-start !py-3" onclick="App.forgotBySms()">💬 Por SMS a mi teléfono</button>
+    </div>`;
+}
+function forgotDoneSheet(html) {
+  return `${sheetHead('Revisa tu correo')}<div class="p-5 space-y-3"><p class="text-sm text-slate-700">${html}</p><button class="${btnP} w-full" onclick="App.closeModal()">Entendido</button></div>`;
+}
+function smsSheet(sent) {
+  return sent
+    ? `<form onsubmit="event.preventDefault();App.smsVerify(this)">${sheetHead('Escribe el código')}
+        <div class="p-5 space-y-3"><p class="text-sm text-slate-600">Te hemos enviado un código por SMS al ${esc(ui.smsPhone)}.</p>
+        <input name="code" required inputmode="numeric" autocomplete="one-time-code" maxlength="8" class="${input} text-center tracking-[0.4em] text-lg" placeholder="000000">
+        <button class="${btnP} w-full">Verificar</button></div></form>`
+    : `<form onsubmit="event.preventDefault();App.smsSend(this)">${sheetHead('Recuperar por SMS')}
+        <div class="p-5 space-y-3"><p class="text-sm text-slate-600">Escribe el teléfono que tiene asociado tu cuenta.</p>
+        <input name="phone" type="tel" required autocomplete="tel" class="${input}" placeholder="+34 600 000 000">
+        <button class="${btnP} w-full">Enviarme el código</button></div></form>`;
 }
 function newPasswordForm(recovery) {
   return `
@@ -661,10 +714,11 @@ function renderUsers() {
         return `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4 ${u.active ? '' : 'opacity-60'}">
           <div class="flex items-center gap-3">
             <span class="grid place-items-center w-10 h-10 rounded-full ${u.role === 'admin' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700'} font-bold">${esc(u.name[0])}</span>
-            <div class="flex-1 min-w-0"><div class="font-semibold truncate">${esc(u.name)}</div><div class="text-xs text-slate-500 truncate">@${esc(u.username)} · ${esc(u.email)}</div><div class="text-xs text-slate-400">${u.role === 'admin' ? 'Admin' : 'Usuario'} · ${os.length} pedidos${u.active ? '' : ' · desactivado'}</div></div>
+            <div class="flex-1 min-w-0"><div class="font-semibold truncate">${esc(u.name)}</div><div class="text-xs text-slate-500 truncate">@${esc(u.username)} · ${esc(u.email)}</div><div class="text-xs text-slate-400">${u.role === 'admin' ? 'Admin' : 'Usuario'} · ${os.length} pedidos${u.active ? '' : ' · desactivado'}${u.needsPassword ? ' · <span class="text-amber-600 font-semibold">sin contraseña aún</span>' : ''}</div></div>
           </div>
           <div class="flex gap-2 mt-3">
             <button class="${btnS} flex-1" onclick="App.editUser('${u.id}')">${ic.edit} Editar</button>
+            <button class="${btnS}" onclick="App.sendPasswordEmail('${u.id}')" title="Enviar email para crear o cambiar la contraseña" aria-label="Enviar email de contraseña">✉</button>
             ${u.id !== ui.sessionId ? `<button class="${btnS} flex-1" onclick="App.toggleUser('${u.id}')">${u.active ? 'Desactivar' : 'Activar'}</button><button class="${btnD}" aria-label="Eliminar" onclick="App.deleteUser('${u.id}')">${ic.trash}</button>` : ''}
           </div></div>`;
       }).join('')}
@@ -675,12 +729,13 @@ function renderUsers() {
         <tbody>${db.users.map(u => {
           const os = db.orders.filter(o => o.userId === u.id);
           return `<tr class="border-t border-slate-100">
-            <td class="px-4 py-3 font-semibold">${esc(u.name)}</td><td class="px-3">@${esc(u.username)}</td><td class="px-3 text-slate-500">${esc(u.email)}</td>
+            <td class="px-4 py-3"><div class="font-semibold">${esc(u.name)}</div>${u.needsPassword ? '<div class="text-xs text-amber-600 font-semibold">Sin contraseña aún</div>' : ''}</td><td class="px-3">@${esc(u.username)}</td><td class="px-3 text-slate-500">${esc(u.email)}</td>
             <td class="px-3"><span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'}">${u.role}</span></td>
             <td class="px-3 text-xs">${os.length} (${os.filter(o => o.status === 'pagado').length} pagados)</td>
             <td class="px-3">${u.active ? '<span class="text-xs text-emerald-700 font-semibold">Activo</span>' : '<span class="text-xs text-slate-400 font-semibold">Desactivado</span>'}</td>
             <td class="px-4 py-2 text-right whitespace-nowrap">
               <button class="${btnS} !px-2 !py-1" onclick="App.editUser('${u.id}')" title="Editar">${ic.edit}</button>
+              <button class="${btnS} !px-2 !py-1 text-xs" onclick="App.sendPasswordEmail('${u.id}')" title="Enviar email para crear o cambiar la contraseña">✉ Email</button>
               ${u.id !== ui.sessionId ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.toggleUser('${u.id}')">${u.active ? 'Desactivar' : 'Activar'}</button>
               <button class="${btnD} !px-2 !py-1" onclick="App.deleteUser('${u.id}')" title="Eliminar">${ic.trash}</button>` : ''}
             </td></tr>`;
@@ -696,7 +751,9 @@ function userForm(u) {
         <div class="sm:col-span-2"><label class="text-xs font-semibold text-slate-600">Nombre completo</label><input name="name" required class="${input} mt-1" value="${esc(u?.name)}"></div>
         <div><label class="text-xs font-semibold text-slate-600">Usuario</label><input name="username" required pattern="[a-zA-Z0-9._-]{3,}" title="Mínimo 3 caracteres: letras, números, . _ -" class="${input} mt-1" value="${esc(u?.username)}"></div>
         <div><label class="text-xs font-semibold text-slate-600">Email (PayPal)</label><input name="email" type="email" required class="${input} mt-1" value="${esc(u?.email)}"></div>
-        <div><label class="text-xs font-semibold text-slate-600">${u ? 'Nueva contraseña (opcional)' : 'Contraseña'}</label><input name="password" ${u ? '' : 'required'} minlength="4" class="${input} mt-1" placeholder="${u ? 'Dejar vacío para no cambiar' : ''}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Teléfono (para recuperar por SMS)</label><input name="phone" type="tel" class="${input} mt-1" value="${esc(u?.phone ? '+' + u.phone : '')}" placeholder="+34 600 000 000"></div>
+        <div><label class="text-xs font-semibold text-slate-600">${u ? 'Nueva contraseña (opcional)' : 'Contraseña (opcional)'}</label><input name="password" type="password" autocomplete="new-password" minlength="6" class="${input} mt-1" placeholder="${u ? 'Dejar vacío para no cambiar' : 'Vacía: la crea él por email'}"></div>
+        ${u ? '' : '<p class="sm:col-span-2 text-xs text-slate-500 -mt-1">Si dejas la contraseña vacía, la primera vez que intente entrar recibirá un email para crearla.</p>'}
         <div><label class="text-xs font-semibold text-slate-600">Rol</label><select name="role" class="${input} mt-1" ${u?.id === ui.sessionId ? 'disabled' : ''}><option value="user" ${u?.role !== 'admin' ? 'selected' : ''}>Usuario</option><option value="admin" ${u?.role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>
       </div>
       <div class="flex justify-end gap-2 px-5 py-4 border-t border-slate-100"><button type="button" class="${btnS}" onclick="App.closeModal()">Cancelar</button><button class="${btnP}">${u ? 'Guardar' : 'Crear usuario'}</button></div>
@@ -716,6 +773,10 @@ function renderSettings() {
         <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-2"><legend class="text-xs font-semibold text-slate-600 px-1">Avisos a los administradores (nuevo pedido, cambio y pago)</legend>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertNotif" class="accent-brand-600 w-4 h-4" ${s.alertNotif ? 'checked' : ''}> Notificación</label>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertEmail" class="accent-brand-600 w-4 h-4" ${s.alertEmail ? 'checked' : ''}> Email a la dirección de cada administrador</label></fieldset>
+        <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-1"><legend class="text-xs font-semibold text-slate-600 px-1">Recuperar contraseña</legend>
+          <p class="text-sm text-slate-600">Por email: siempre disponible.</p>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="smsEnabled" class="accent-brand-600 w-4 h-4" ${s.smsEnabled ? 'checked' : ''}> También por SMS a los usuarios con teléfono</label>
+          <p class="text-xs text-slate-400">El SMS necesita un proveedor (Twilio, Vonage…) configurado en Supabase → Authentication → Sign In / Providers → Phone. Actívalo aquí solo cuando esté listo.</p></fieldset>
         <div><label class="text-xs font-semibold text-slate-600">PayPal Client ID (Sandbox)</label><input name="paypalClientId" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId)}" placeholder="Vacío = pago simulado">
           <p class="text-xs text-slate-500 mt-1">Con un Client ID de <b>sandbox</b> (developer.paypal.com) se usan los botones reales de PayPal en modo pruebas. Sin él, el pago se simula de forma realista. En ambos casos se registra qué usuario ha pagado.</p></div>
         <button class="${btnP}">Guardar ajustes</button>
@@ -961,14 +1022,15 @@ const App = {
     const btnEl = form.querySelector('button'), id = form.username.value.trim();
     btnEl.disabled = true; btnEl.textContent = 'Entrando…';
     try {
-      let email = id;
-      if (!id.includes('@')) {
-        const { data, error } = await sb.rpc('email_for_username', { p_username: id });
-        if (error) throw error;
-        email = data;
+      const acc = await accountStatus(id);
+      if (!acc) throw new Error('Usuario o contraseña incorrectos');
+      if (acc.needs_password) { // cuenta creada por un administrador sin contraseña: se crea desde el email
+        await sendRecoveryEmail(acc.email);
+        openModal(firstPasswordSheet(acc.email));
+        btnEl.disabled = false; btnEl.textContent = 'Entrar';
+        return;
       }
-      if (!email) throw new Error('Usuario o contraseña incorrectos');
-      const { data, error } = await sb.auth.signInWithPassword({ email, password: form.password.value });
+      const { data, error } = await sb.auth.signInWithPassword({ email: acc.email, password: form.password.value });
       if (error) throw new Error(/invalid/i.test(error.message) ? 'Usuario o contraseña incorrectos' : error.message);
       await enterSession(data.user.id, true);
     } catch (e) {
@@ -976,13 +1038,38 @@ const App = {
       btnEl.disabled = false; btnEl.textContent = 'Entrar';
     }
   },
-  async forgotPassword() {
-    const typed = document.querySelector('#login-form [name=username]')?.value.trim() || '';
-    const email = (prompt('Escribe el email de tu cuenta y te enviaremos un enlace para crear una contraseña nueva:', typed.includes('@') ? typed : '') || '').trim();
-    if (!email) return;
-    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
-    if (error) return toast(error.message, 'error');
-    toast('Si el email existe, recibirás un enlace en unos minutos (revisa también el spam).', 'info');
+  forgotPassword() {
+    openModal(forgotSheet(document.querySelector('#login-form [name=username]')?.value.trim() || ''));
+  },
+  async forgotLookup(form) {
+    const acc = await accountStatus(form.ident.value.trim());
+    if (!acc) return openModal(forgotDoneSheet('Si los datos son correctos, recibirás un email con un enlace para crear una contraseña nueva.'));
+    ui.forgotEmail = acc.email;
+    if (acc.sms_available) return openModal(forgotChoiceSheet(acc.email));
+    App.forgotByEmail();
+  },
+  async forgotByEmail() {
+    try { await sendRecoveryEmail(ui.forgotEmail); } catch (e) { return toast(e.message, 'error'); }
+    openModal(forgotDoneSheet(`Te hemos enviado un enlace a <b>${esc(maskEmail(ui.forgotEmail))}</b> para crear una contraseña nueva. Revisa también la carpeta de spam.`));
+  },
+  forgotBySms() { openModal(smsSheet()); },
+  async smsSend(form) {
+    const phone = '+' + normalizePhone(form.phone.value);
+    if (phone.length < 11) return toast('Escribe el teléfono con prefijo, p. ej. +34 600 000 000', 'error');
+    const { error } = await sb.auth.signInWithOtp({ phone, options: { shouldCreateUser: false } });
+    if (error) return toast('No se pudo enviar el SMS: ' + error.message, 'error');
+    ui.smsPhone = phone; openModal(smsSheet(true)); toast('Código enviado por SMS', 'info');
+  },
+  async smsVerify(form) {
+    const { data, error } = await sb.auth.verifyOtp({ phone: ui.smsPhone, token: form.code.value.trim(), type: 'sms' });
+    if (error) return toast('Código incorrecto o caducado', 'error');
+    ui.recovery = true; closeModal();
+    await enterSession(data.user.id, true);
+  },
+  async sendPasswordEmail(id) {
+    const u = userById(id);
+    if (!confirm(`¿Enviar a ${u.email} un enlace para ${u.needsPassword ? 'crear' : 'cambiar'} su contraseña?`)) return;
+    try { await sendRecoveryEmail(u.email); toast(`Email enviado a ${u.email}`); } catch (e) { toast(e.message, 'error'); }
   },
   async setNewPassword(form) {
     const p1 = form.p1.value, p2 = form.p2.value;
@@ -990,7 +1077,9 @@ const App = {
     if (p1 !== p2) return toast('Las contraseñas no coinciden', 'error');
     const { error } = await sb.auth.updateUser({ password: p1 });
     if (error) return toast(error.message, 'error');
-    ui.recovery = false; closeModal(); toast('Contraseña guardada');
+    await sb.rpc('mark_password_set');
+    const u = me(); if (u) u.needsPassword = false;
+    ui.recovery = false; closeModal(); render(); toast('Contraseña guardada');
   },
   changePassword() { openModal(newPasswordForm(false)); },
   profileSheet() { openModal(profileSheet()); },
@@ -1268,7 +1357,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     const f = Object.fromEntries(new FormData(form)), u = id ? userById(id) : null;
     const { error } = await sb.rpc('admin_save_user', {
       p_id: id || null, p_email: f.email.trim(), p_password: f.password || null, p_name: f.name.trim(),
-      p_username: f.username.trim(), p_role: f.role || u?.role || 'user', p_active: u ? u.active : true,
+      p_username: f.username.trim(), p_role: f.role || u?.role || 'user', p_active: u ? u.active : true, p_phone: f.phone?.trim() || null,
     });
     if (error) return toast(error.message, 'error');
     await fetchAll(); closeModal(); render();
@@ -1276,7 +1365,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
   },
   async toggleUser(id) {
     const u = userById(id);
-    const { error } = await sb.rpc('admin_save_user', { p_id: id, p_email: u.email, p_password: null, p_name: u.name, p_username: u.username, p_role: u.role, p_active: !u.active });
+    const { error } = await sb.rpc('admin_save_user', { p_id: id, p_email: u.email, p_password: null, p_name: u.name, p_username: u.username, p_role: u.role, p_active: !u.active, p_phone: u.phone || null });
     if (error) return toast(error.message, 'error');
     await fetchAll(); render(); toast(u.active ? 'Usuario desactivado' : 'Usuario activado', 'info');
   },
@@ -1292,7 +1381,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
   saveSettings(form) {
     const f = Object.fromEntries(new FormData(form));
     db.settings.maxUnits = Math.max(1, parseInt(f.maxUnits) || 5);
-    db.settings.alertNotif = !!f.alertNotif; db.settings.alertEmail = !!f.alertEmail;
+    db.settings.alertNotif = !!f.alertNotif; db.settings.alertEmail = !!f.alertEmail; db.settings.smsEnabled = !!f.smsEnabled;
     db.settings.currency = f.currency;
     db.settings.paypalClientId = f.paypalClientId.trim();
     save(); render(); toast('Ajustes guardados');

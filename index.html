@@ -602,7 +602,7 @@ function renderCatalog() {
   const models = ofType.filter(m => !ui.catModel || m.id === ui.catModel).sort((a, b) => offerActive(b) - offerActive(a)); // las ofertas, siempre primero
   const filtered = q || ui.cat || ui.catModel;
   return `
-    <div class="mb-4"><h1 class="text-2xl font-bold">Catálogo</h1><p class="text-sm text-slate-500">Elige talla y cantidad. Puedes tener un pedido por modelo (máx. ${db.settings.maxUnits} uds.).</p></div>
+    <div class="mb-4"><h1 class="text-2xl font-bold">Catálogo</h1><p class="text-sm text-slate-500">Elige talla y cantidad. Puedes tener un pedido por modelo${db.settings.maxUnits ? ` (máx. ${db.settings.maxUnits} uds.)` : ''}.</p></div>
     <div class="flex flex-col sm:flex-row gap-2 mb-3">
       <div class="relative flex-1">
         <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3.5-3.5"/></svg>
@@ -1185,7 +1185,8 @@ function renderSettings() {
     <div class="grid lg:grid-cols-2 gap-5">
       <form class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" onsubmit="event.preventDefault();App.saveSettings(this)">
         <h2 class="font-semibold">Pedidos y pagos</h2>
-        <div><label class="text-xs font-semibold text-slate-600">Máximo de unidades por pedido (por modelo)</label><input name="maxUnits" type="number" min="1" max="50" class="${input} mt-1" value="${s.maxUnits}"></div>
+        <div><label class="text-xs font-semibold text-slate-600">Máximo de unidades por pedido (por modelo)</label><input name="maxUnits" type="number" min="1" step="1" class="${input} mt-1" value="${s.maxUnits || ''}" placeholder="Sin límite">
+          <p class="text-xs text-slate-400 mt-1">Déjalo vacío para no poner límite.</p></div>
         <div><label class="text-xs font-semibold text-slate-600">Moneda</label><select name="currency" class="${input} mt-1">${['EUR', 'USD', 'GBP'].map(c => `<option ${s.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
         <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-2"><legend class="text-xs font-semibold text-slate-600 px-1">Avisos a los administradores (nuevo pedido, cambio y pago)</legend>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertNotif" class="accent-brand-600 w-4 h-4" ${s.alertNotif ? 'checked' : ''}> Notificación</label>
@@ -1727,7 +1728,7 @@ const App = {
   step(mid, size, delta) {
     const m = modelById(mid), s = selFor(m);
     const next = Math.max(0, (s.items[size] || 0) + delta);
-    if (delta > 0 && units(s.items) + 1 > db.settings.maxUnits) return toast(`Máximo ${db.settings.maxUnits} unidades por modelo`, 'error');
+    if (delta > 0 && db.settings.maxUnits && units(s.items) + 1 > db.settings.maxUnits) return toast(`Máximo ${db.settings.maxUnits} unidades por modelo`, 'error');
     s.items[size] = next; render();
   },
   saveOrder(mid) {
@@ -1997,7 +1998,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
   // --- admin: ajustes ---
   saveSettings(form) {
     const f = Object.fromEntries(new FormData(form));
-    db.settings.maxUnits = Math.max(1, parseInt(f.maxUnits) || 5);
+    db.settings.maxUnits = parseInt(f.maxUnits) > 0 ? parseInt(f.maxUnits) : null; // vacío = sin límite
     db.settings.alertNotif = !!f.alertNotif; db.settings.alertEmail = !!f.alertEmail; db.settings.smsEnabled = !!f.smsEnabled;
     db.settings.currency = f.currency;
     save(); render(); toast('Ajustes guardados');

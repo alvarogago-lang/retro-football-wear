@@ -8,7 +8,8 @@
 //   test     → email de prueba al administrador que la llama
 //
 // Secretos (Supabase → Edge Functions → Secrets):
-//   SMTP_PASS       contraseña de aplicación de Google de la cuenta remitente (la pega el usuario)
+//   GMAIL_APP_PASSWORD  contraseña de aplicación de Google (16 letras) de laprimamery@gmail.com; la pega el usuario
+//                       (SMTP_PASS se acepta como nombre antiguo). NO sirve la contraseña normal de la cuenta.
 //   MAIL_SENDER     (opcional) remitente; por defecto laprimamery@gmail.com   MAIL_FROM_NAME  La Prima Mery (opcional)
 //   SMTP_HOST / SMTP_PORT / SMTP_USER  opcionales: smtp.gmail.com / 465 / remitente
 import nodemailer from 'npm:nodemailer@6.9.16';
@@ -57,7 +58,7 @@ Deno.serve(async (req) => {
     if (!me?.active || me.pending) return json({ error: 'Tu cuenta no está activa' }, 403);
     const isAdmin = me.role === 'admin';
 
-    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = env('SMTP_PASS').replace(/\s+/g, ''); // Google la muestra en grupos de 4: se quitan espacios y saltos de línea
+    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = (env('GMAIL_APP_PASSWORD') || env('SMTP_PASS')).replace(/\s+/g, ''); // Google la muestra en grupos de 4: se quitan espacios y saltos de línea
     if (!pass) return json({ error: 'El correo de la app aún no está configurado.', notConfigured: true }, 503);
     const transport = nodemailer.createTransport({
       host: env('SMTP_HOST') || 'smtp.gmail.com', port: Number(env('SMTP_PORT') || 465), secure: true,
@@ -127,6 +128,6 @@ Deno.serve(async (req) => {
     return json({ error: 'Tipo de envío no válido' }, 400);
   } catch (e) {
     const msg = String((e as Error)?.message ?? e);
-    return json({ error: /Invalid login|535|Username and Password not accepted|BadCredentials/i.test(msg) ? `Gmail ha rechazado la contraseña de aplicación (SMTP_PASS). Detalle: ${msg.slice(0, 160)}` : msg }, 500);
+    return json({ error: /Invalid login|535|Username and Password not accepted|BadCredentials/i.test(msg) ? `Gmail ha rechazado la contraseña de aplicación (GMAIL_APP_PASSWORD). Detalle: ${msg.slice(0, 160)}` : msg }, 500);
   }
 });

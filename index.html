@@ -1387,7 +1387,7 @@ const App = {
     b.disabled = true; b.textContent = 'Enviando…';
     const r = await callMail({ type: 'test' });
     b.disabled = false; b.textContent = '✉ Enviarme un email de prueba';
-    toast(r.ok ? `Email de prueba enviado a ${me().email}. Revisa tu bandeja (y el spam).` : r.notConfigured ? 'Falta la contraseña de aplicación (SMTP_PASS) en Supabase.' : r.error, r.ok ? 'ok' : 'error');
+    toast(r.ok ? `Email de prueba enviado a ${me().email}. Revisa tu bandeja (y el spam).` : r.notConfigured ? 'Falta la contraseña de aplicación de Gmail (GMAIL_APP_PASSWORD) en Supabase.' : r.error, r.ok ? 'ok' : 'error');
   },
   openInvite() { openModal(inviteSheet()); },
   async sendInvite(form) {

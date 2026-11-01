@@ -55,4 +55,4 @@ Cada día (pg_cron, 07:00 UTC) se proponen para baja los usuarios sin pedidos en
 
 - **Usuario → pestaña Contacto:** envía consultas a los administradores y ve la conversación. **Administrador → pestaña Mensajes:** responde o marca como resuelta. Cada mensaje llega por notificación y por email.
 - **Invitar a un amigo:** email con enlace a `?registro`, que abre «Crear cuenta» (máximo 10 invitaciones al día por usuario). También se puede compartir el enlace (WhatsApp, etc.).
-- Los emails los envía la Edge Function `supabase/functions/send-mail` desde laprimamery@gmail.com por SMTP (puerto 465). Secreto necesario: `SMTP_PASS` (contraseña de aplicación de Google de laprimamery@gmail.com).
+- Los emails los envía la Edge Function `supabase/functions/send-mail` desde laprimamery@gmail.com por SMTP (puerto 465). Secreto necesario: `GMAIL_APP_PASSWORD` (contraseña de aplicación de Google de laprimamery@gmail.com; no sirve la contraseña normal).

@@ -53,7 +53,7 @@ Cada día (pg_cron, 07:00 UTC) se proponen para baja los usuarios sin pedidos en
 
 ## Contacto e invitaciones
 
-- **Usuario → pestaña Contacto:** envía consultas a los administradores y ve la conversación. **Administrador → pestaña Mensajes:** responde o marca como resuelta. Cada mensaje llega por notificación y por email.
+- **Buzón (campana) → Mensajes:** junto a Notificaciones y Correo. El administrador ve todas las conversaciones (abiertas/todas), responde, marca como resuelta o inicia una nueva; el usuario ve las suyas y responde. El usuario también abre consultas desde la pestaña **Contacto**. Cada mensaje llega por notificación y por email.
 - **Invitar a un amigo:** email con enlace a `?registro`, que abre «Crear cuenta» (máximo 10 invitaciones al día por usuario). También se puede compartir el enlace (WhatsApp, etc.).
 - Los emails los envía la Edge Function `supabase/functions/send-mail` desde laprimamery@gmail.com por SMTP (puerto 465). Secreto necesario: `GMAIL_APP_PASSWORD` (contraseña de aplicación de Google de laprimamery@gmail.com; no sirve la contraseña normal).
 
@@ -70,4 +70,4 @@ En Modelos, el botón **Oferta** (debajo de Editar) activa o desactiva una ofert
 
 - **Modelo nuevo** y **oferta activada o cambiada** → a todos los usuarios activos (copia oculta, tandas de 50) + notificación en la app.
 - **Pedido hecho** → «Hemos recibido tu pedido» al usuario. **Confirmación** del administrador (con plazo de entrega opcional) → al usuario.
-- **Mensajes**: el administrador puede iniciar una conversación (Mensajes → Nueva conversación). Cada mensaje llega por la app y por email al usuario y a los administradores, con copia oculta a laprimamery@gmail.com.
+- **Mensajes**: el administrador puede iniciar una conversación (Buzón → Mensajes → Nueva conversación). Cada mensaje llega por la app y por email al usuario y a los administradores, con copia oculta a laprimamery@gmail.com.

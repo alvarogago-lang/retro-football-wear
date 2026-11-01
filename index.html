@@ -187,12 +187,24 @@ function toast(msg, type = 'ok') {
   setTimeout(() => el.remove(), 3200);
 }
 function openModal(html, wide = false) {
+  ui.inboxOpen = false;
   document.getElementById('modal-root').innerHTML = `
     <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 p-0 sm:p-4" onclick="if(event.target===this)App.closeModal()">
       <div class="fade-in bg-white w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl shadow-2xl">${html}</div>
     </div>`;
 }
-function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+function closeModal() { ui.inboxOpen = false; document.getElementById('modal-root').innerHTML = ''; }
+// Si el Buzón está abierto, se vuelve a pintar con los datos nuevos sin perder el scroll ni lo que se está escribiendo.
+function refreshInbox() {
+  const box = document.querySelector('#modal-root .fade-in');
+  if (!ui.inboxOpen || !box) return;
+  const scroll = box.scrollTop, focus = document.activeElement?.id;
+  const drafts = [...box.querySelectorAll('textarea[id]')].map(t => [t.id, t.value]);
+  box.innerHTML = inboxSheet();
+  drafts.forEach(([id, v]) => { const t = document.getElementById(id); if (t) t.value = v; });
+  box.scrollTop = scroll;
+  if (focus) document.getElementById(focus)?.focus();
+}
 
 // ---------- iconos ----------
 const ic = {
@@ -246,11 +258,12 @@ function render() {
   if (!u) { app.innerHTML = renderLogin(); return; }
   if (!ui.tab) ui.tab = u.role === 'admin' ? 'panel' : 'catalogo';
   const tabs = u.role === 'admin'
-    ? [['panel', 'Panel'], ['pedidos', 'Pedidos'], ['mensajes', 'Mensajes' + countPill(unreadThreads())], ['modelos', 'Modelos'], ['usuarios', 'Usuarios'], ['ajustes', 'Ajustes']]
+    ? [['panel', 'Panel'], ['pedidos', 'Pedidos'], ['modelos', 'Modelos'], ['usuarios', 'Usuarios'], ['ajustes', 'Ajustes']]
     : [['catalogo', 'Catálogo'], ['mis', 'Mis pedidos'], ['contacto', 'Contacto' + countPill(unreadThreads())]];
+  if (!tabs.some(([k]) => k === ui.tab)) ui.tab = tabs[0][0];
   const body = {
     panel: renderPanel, pedidos: renderOrders, modelos: renderModels, usuarios: renderUsers, ajustes: renderSettings,
-    catalogo: renderCatalog, mis: renderMyOrders, contacto: renderContact, mensajes: renderMessages,
+    catalogo: renderCatalog, mis: renderMyOrders, contacto: renderContact,
   }[ui.tab]?.() ?? '';
   const roleTag = `<span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-pitch-50 text-pitch-700'}">${u.role === 'admin' ? 'Admin' : 'Usuario'}</span>`;
   app.innerHTML = `
@@ -288,6 +301,7 @@ function render() {
           <span class="grid place-items-center w-12 h-7 rounded-full ${ui.tab === k ? 'bg-cream-100' : ''}">${navSvg(k)}</span>${l}</button>`).join('')}
       </div>
     </nav>`;
+  refreshInbox();
 }
 function profileSheet() {
   const u = me();
@@ -917,7 +931,7 @@ function threadCard(t, asAdmin) {
       }).join('')}
       ${t.status === 'cerrada' && !asAdmin ? '<p class="text-xs text-slate-400 text-center pt-1">Esta consulta está resuelta. Si necesitas algo más, abre una nueva.</p>' : `
       <form class="pt-2 flex flex-col gap-2" onsubmit="event.preventDefault();App.replyThread('${t.id}',this)">
-        <textarea name="body" required rows="2" maxlength="2000" class="${input}" placeholder="${asAdmin ? 'Escribe tu respuesta…' : 'Escribe un mensaje…'}"></textarea>
+        <textarea id="reply-${t.id}" name="body" required rows="2" maxlength="2000" class="${input}" placeholder="${asAdmin ? 'Escribe tu respuesta…' : 'Escribe un mensaje…'}"></textarea>
         <div class="flex flex-wrap gap-2 justify-end">
           ${asAdmin ? `<button type="button" class="${btnS}" onclick="App.closeThread('${t.id}')">${t.status === 'cerrada' ? 'Reabrir' : 'Marcar como resuelta'}</button>` : ''}
           <button class="${btnP}">${asAdmin ? 'Responder' : 'Enviar'}</button>
@@ -944,18 +958,28 @@ function renderContact() {
     <div class="grid gap-3">${mine.map(t => threadCard(t, false)).join('') || '<p class="text-sm text-slate-400 bg-white rounded-2xl ring-1 ring-slate-200 p-6 text-center">Todavía no has enviado ninguna consulta.</p>'}</div>`;
 }
 
-function renderMessages() {
+// Pestaña «Mensajes» del Buzón: el administrador ve todas las conversaciones; el usuario, las suyas.
+function messagesPanel() {
+  const empty = (txt) => `<p class="text-sm text-slate-400 text-center py-8">${txt}</p>`;
+  const recent = (a, b) => (b.updatedAt || b.at).localeCompare(a.updatedAt || a.at);
+  if (me().role !== 'admin') {
+    const mine = db.contact.filter(t => t.userId === ui.sessionId).sort(recent);
+    return `
+      <div class="flex flex-wrap items-center gap-2"><p class="text-xs text-slate-400 flex-1 min-w-[180px]">Tus conversaciones con La Prima Mery. Las respuestas llegan aquí y por email.</p>
+        <button class="${btnS} !py-1.5" onclick="App.closeModal();App.go('contacto')">${ic.plus} Nueva consulta</button></div>
+      <div class="grid gap-3">${mine.map(t => threadCard(t, false)).join('') || empty('Todavía no tienes mensajes.')}</div>`;
+  }
   const filter = ui.msgFilter || 'abiertas';
-  const all = [...db.contact].sort((a, b) => (b.updatedAt || b.at).localeCompare(a.updatedAt || a.at));
+  const all = [...db.contact].sort(recent);
   const list = filter === 'abiertas' ? all.filter(t => t.status !== 'cerrada') : all;
-  const chip = (k, l, n) => `<button onclick="App.msgFilter('${k}')" class="rounded-full px-3.5 py-1.5 text-sm font-semibold ring-1 ${filter === k ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200'}">${l} <span class="${filter === k ? 'text-white/60' : 'text-slate-400'}">${n}</span></button>`;
+  const chip = (k, l, n) => `<button onclick="App.msgFilter('${k}')" class="rounded-full px-3 py-1 text-xs font-semibold ring-1 ${filter === k ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200'}">${l} <span class="${filter === k ? 'text-white/60' : 'text-slate-400'}">${n}</span></button>`;
   return `
-    <div class="flex flex-wrap items-end gap-3 mb-4">
-      <div class="flex-1 min-w-[200px]"><h1 class="text-2xl font-bold">Mensajes</h1><p class="text-sm text-slate-500">Conversaciones con los usuarios. Cada mensaje llega por la app y por email (con copia a ${CONTACT_EMAIL}).</p></div>
-      <button class="${btnP}" onclick="App.openNewThread()">${ic.plus} Nueva conversación</button>
+    <div class="flex flex-wrap items-center gap-2">
+      ${chip('abiertas', 'Abiertas', all.filter(t => t.status !== 'cerrada').length)}${chip('todas', 'Todas', all.length)}
+      <button class="${btnP} !py-1.5 ml-auto" onclick="App.openNewThread()">${ic.plus} Nueva conversación</button>
     </div>
-    <div class="flex gap-2 mb-4">${chip('abiertas', 'Abiertas', all.filter(t => t.status !== 'cerrada').length)}${chip('todas', 'Todas', all.length)}</div>
-    <div class="grid gap-3">${list.map(t => threadCard(t, true)).join('') || '<p class="text-sm text-slate-400 bg-white rounded-2xl ring-1 ring-slate-200 p-6 text-center">No hay conversaciones.</p>'}</div>`;
+    <p class="text-xs text-slate-400">Cada mensaje llega por la app y por email (con copia a ${CONTACT_EMAIL}).</p>
+    <div class="grid gap-3">${list.map(t => threadCard(t, true)).join('') || empty('No hay conversaciones.')}</div>`;
 }
 function newThreadSheet() {
   const users = db.users.filter(u => u.active && !u.pending && u.id !== ui.sessionId).sort((a, b) => a.name.localeCompare(b.name));
@@ -966,7 +990,7 @@ function newThreadSheet() {
         <datalist id="thread-users">${users.map(u => `<option value="${esc(u.name)} · @${esc(u.username)}"></option>`).join('')}</datalist></div>
       <div><label class="text-xs font-semibold text-slate-600">Asunto</label><input name="subject" required maxlength="120" class="${input} mt-1"></div>
       <div><label class="text-xs font-semibold text-slate-600">Mensaje</label><textarea name="body" required rows="4" maxlength="2000" class="${input} mt-1"></textarea></div>
-      <p class="text-xs text-slate-400">Le llegará por notificación en la app y por email desde ${CONTACT_EMAIL}. Podrá responderte en su pestaña Contacto.</p>
+      <p class="text-xs text-slate-400">Le llegará por notificación en la app y por email desde ${CONTACT_EMAIL}. Podrá responderte desde su Buzón o su pestaña Contacto.</p>
       <button class="${btnP} w-full !py-2.5">Enviar mensaje</button>
     </div></form>`;
 }
@@ -1344,8 +1368,8 @@ function inboxSheet() {
     <div class="p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] space-y-3">
       ${perm === 'default' ? `<div class="flex items-center gap-3 rounded-xl bg-cream-100 px-3 py-2.5"><span class="text-sm flex-1">Recibe también los avisos como notificaciones de ${isMobile() ? 'tu móvil' : 'tu ordenador'}.</span><button class="${btnP} !py-1.5 shrink-0" onclick="App.enableSysNotif()">Activar</button></div>` : ''}
       ${perm === 'denied' ? '<p class="text-xs text-slate-500">Las notificaciones del sistema están bloqueadas en este navegador. Puedes permitirlas desde los ajustes del sitio.</p>' : ''}
-      <div class="flex gap-1 rounded-xl bg-slate-100 p-1">${tabBtn('notif', 'Notificaciones', unread())}${tabBtn('mail', 'Correo', 0)}</div>
-      ${tab === 'notif' ? `
+      <div class="flex gap-1 rounded-xl bg-slate-100 p-1">${tabBtn('notif', 'Notificaciones', unread())}${tabBtn('msgs', 'Mensajes', unreadThreads())}${tabBtn('mail', 'Correo', 0)}</div>
+      ${tab === 'msgs' ? messagesPanel() : tab === 'notif' ? `
         ${notifs.some(n => !n.read) ? `<button class="text-xs font-semibold text-brand-700" onclick="App.readAll()">Marcar todo como leído</button>` : ''}
         <div class="grid gap-2">${notifs.map(n => `<button onclick="App.openNotif('${n.id}')" class="text-left rounded-xl ring-1 px-3 py-2.5 ${n.read ? 'ring-slate-100 bg-white' : 'ring-brand-100 bg-brand-50/60'}">
           <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full ${n.read ? 'bg-transparent' : 'bg-rose-500'} shrink-0"></span><span class="font-semibold text-sm flex-1">${esc(n.title)}</span><span class="text-[11px] text-slate-400 shrink-0">${fmtDate(n.at)}</span></div>
@@ -1509,6 +1533,12 @@ const App = {
     render();
   },
   msgFilter(k) { ui.msgFilter = k; render(); },
+  openThreadInInbox(id) {
+    const t = db.contact.find(x => x.id === id);
+    if (t && t.status === 'cerrada') ui.msgFilter = 'todas';
+    ui.inboxTab = 'msgs'; ui.openThread = null; App.openInbox();
+    if (t) App.toggleThread(id);
+  },
   openNewThread() { openModal(newThreadSheet()); },
   async startThread(form) {
     const who = form.who.value.trim().toLowerCase(), handle = (who.match(/@([\w.\-]+)/) || [])[1];
@@ -1518,7 +1548,8 @@ const App = {
     const a = me(), now = new Date().toISOString();
     const t = { id: uid('c'), userId: target.id, userName: target.name, subject: form.subject.value.trim(), status: 'respondida', at: now, updatedAt: now,
       readUser: false, readAdmin: true, startedBy: 'admin', messages: [{ from: 'admin', by: a.id, name: a.name, body: form.body.value.trim(), at: now }] };
-    db.contact.push(t); notifyContact(t, true); save(); closeModal(); ui.openThread = t.id; render();
+    db.contact.push(t); notifyContact(t, true); save();
+    ui.msgFilter = 'abiertas'; ui.inboxTab = 'msgs'; ui.openThread = t.id; App.openInbox(); render();
     await syncChain;
     const r = await callMail({ type: 'reply', threadId: t.id });
     toast(mailNote(r, `Mensaje enviado a ${target.name}`), r.ok || r.notConfigured ? 'ok' : 'error');
@@ -1684,18 +1715,18 @@ const App = {
   },
 
   // --- buzón y avisos ---
-  openInbox() { openModal(inboxSheet()); },
-  inboxTab(t) { ui.inboxTab = t; openModal(inboxSheet()); },
-  readAll() { db.notifications.forEach(n => { if (n.to === ui.sessionId) n.read = true; }); save(); render(); openModal(inboxSheet()); },
+  openInbox() { openModal(inboxSheet(), true); ui.inboxOpen = true; },
+  inboxTab(t) { ui.inboxTab = t; App.openInbox(); },
+  readAll() { db.notifications.forEach(n => { if (n.to === ui.sessionId) n.read = true; }); save(); render(); },
   openNotif(id) {
     const n = db.notifications.find(x => x.id === id); n.read = true; save();
-    if (n.kind === 'contact') { ui.openThread = n.threadId; closeModal(); return App.go(me().role === 'admin' ? 'mensajes' : 'contacto'); }
+    if (n.kind === 'contact') return App.openThreadInInbox(n.threadId);
     closeModal(); App.go(n.kind === 'signup' || n.kind === 'inactive' ? 'usuarios' : me().role === 'admin' ? 'pedidos' : 'mis');
   },
   async enableSysNotif() {
     const p = await Notification.requestPermission();
     if (p === 'granted') sysNotify(APP_NAME, 'Avisos activados: te avisaremos de las novedades de tus pedidos.');
-    openModal(inboxSheet());
+    App.openInbox();
   },
   confirmOrder(oid) { openModal(confirmForm(db.orders.find(o => o.id === oid))); },
   refreshConfirmText(form, oid) { // mientras el admin no edite el mensaje, se rehace con el plazo indicado

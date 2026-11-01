@@ -34,3 +34,11 @@ Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_
 Al publicar un modelo (o con el botón 📣 de cada modelo), todos los usuarios reciben una notificación en la app y el administrador envía un email desde su propio correo: la app lo abre ya redactado con los destinatarios en copia oculta, repartidos en tandas si son muchos.
 
 La Edge Function `supabase/functions/notify-new-model` (envío automático con Brevo) queda desplegada pero sin uso: se puede activar más adelante si se configura un proveedor de correo.
+
+## Solicitudes de cuenta
+
+- En la pantalla de acceso, **«Crear cuenta»** pide nombre completo, usuario, email y teléfono (todos obligatorios).
+- La cuenta queda **pendiente**: no puede ver el catálogo ni pedir. Los administradores reciben una notificación y la validan o rechazan en Usuarios → Solicitudes pendientes.
+- Emails: al solicitar, «Confirm sign up» (pendiente de validación + confirmar email); al validar, «Reset password» (activar y crear contraseña). Las plantillas en español están en `supabase/plantillas-email/` y solo se pueden aplicar con un SMTP propio en Supabase.
+
+Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_contrasenas.sql`, `supabase/003_solicitudes.sql`.

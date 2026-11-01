@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
     if (!me?.active || me.pending) return json({ error: 'Tu cuenta no está activa' }, 403);
     const isAdmin = me.role === 'admin';
 
-    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = env('SMTP_PASS').replace(/s+/g, ''); // Google la muestra en grupos de 4: se quitan espacios y saltos de línea
+    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = env('SMTP_PASS').replace(/\s+/g, ''); // Google la muestra en grupos de 4: se quitan espacios y saltos de línea
     if (!pass) return json({ error: 'El correo de la app aún no está configurado.', notConfigured: true }, 503);
     const transport = nodemailer.createTransport({
       host: env('SMTP_HOST') || 'smtp.gmail.com', port: Number(env('SMTP_PORT') || 465), secure: true,

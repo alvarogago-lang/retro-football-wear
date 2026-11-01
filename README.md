@@ -2,7 +2,7 @@
 
 App web instalable (PWA) para pedir ropa de fútbol retro: camisetas, pantalones y chaquetas.
 
-**Publicada en:** https://alvarogago-lang.github.io/retro-football-wear/
+**Publicada en:** https://laprimamery.github.io/ (repositorio laprimamery/laprimamery.github.io; Supabase en la organización laprimamery). La dirección antigua https://alvarogago-lang.github.io/retro-football-wear/ redirige aquí y pasa la sesión abierta (`#mudanza=`).
 
 ## Qué hace
 

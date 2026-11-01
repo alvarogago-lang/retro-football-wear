@@ -65,6 +65,14 @@ const imgTag = (src, m, cls = '') =>
 // deciden qué puede leer y escribir cada usuario. Ver supabase/schema.sql.
 const SB_URL = 'https://jyqdglmhsbuzvivxmdkp.supabase.co';
 const SB_KEY = 'sb_publishable_BRVEWF8vro8wpiT3xhVQWg_40i4Hjpc'; // clave pública: segura en el navegador gracias a RLS
+// Mudanza desde la dirección antigua (alvarogago-lang.github.io/retro-football-wear): aquella página reenvía aquí
+// con «#mudanza=<refresh token>» si había sesión abierta. El fragmento nunca llega al servidor y se borra al momento.
+const MOVED = (() => {
+  const m = location.hash.match(/^#mudanza(?:=([^&]*))?/);
+  if (!m) return null;
+  history.replaceState(null, '', location.pathname + location.search);
+  return { token: m[1] ? decodeURIComponent(m[1]) : null };
+})();
 const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const TABLES = ['categories', 'models', 'orders', 'notifications', 'emails', 'contact'];
 
@@ -2048,7 +2056,18 @@ async function enterSession(userId, fresh) {
   render(); subscribeRealtime();
   if (fresh) toast(`Hola, ${u.name.split(' ')[0]}`, 'info');
   const n = unread(); if (n) sysNotify(APP_NAME, `Tienes ${n} aviso${n === 1 ? '' : 's'} sin leer.`);
-  if (ui.recovery) openModal(newPasswordForm(true)); else offerInstallOnce();
+  if (ui.recovery) openModal(newPasswordForm(true)); else if (MOVED) openModal(movedSheet()); else offerInstallOnce();
+}
+// Aviso para quien llega desde la dirección antigua: que instale la app desde la nueva.
+function movedSheet() {
+  return `${sheetHead('La Prima Mery tiene nueva dirección')}
+    <div class="p-5 space-y-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <p class="text-sm text-slate-700">Ahora estamos en <b class="text-brand-700">${esc(appUrl())}</b>. Tus pedidos, mensajes y tu cuenta siguen igual.</p>
+      <p class="text-sm text-slate-700">Si tenías la app instalada, <b>instálala de nuevo desde aquí</b> y borra el icono antiguo, que ya solo te traería a esta página.</p>
+      ${canInstall() ? `<button class="${btnP} w-full !py-3" onclick="App.showInstall()">${ic.install} Instalar la app</button>` : ''}
+      ${qrBlock(appUrl(), 'Para abrirla en otro dispositivo, escanea este código.')}
+      <button class="${btnS} w-full" onclick="App.closeModal()">Entendido</button>
+    </div>`;
 }
 sb.auth.onAuthStateChange((event) => {
   if (event === 'PASSWORD_RECOVERY') { ui.recovery = true; if (me()) openModal(newPasswordForm(true)); }
@@ -2056,9 +2075,13 @@ sb.auth.onAuthStateChange((event) => {
 });
 (async () => {
   ui.loading = true; render();
-  const { data: { session } } = await sb.auth.getSession();
+  let { data: { session } } = await sb.auth.getSession();
+  if (!session && MOVED?.token) session = (await sb.auth.refreshSession({ refresh_token: MOVED.token })).data?.session || null; // sesión traída de la dirección antigua
   if (session) await enterSession(session.user.id, false);
-  else { ui.loading = false; render(); if (new URLSearchParams(location.search).has('registro')) App.openSignup(); }
+  else {
+    ui.loading = false; render();
+    if (new URLSearchParams(location.search).has('registro')) App.openSignup(); else if (MOVED) openModal(movedSheet());
+  }
 })();
 </script>
 </body>

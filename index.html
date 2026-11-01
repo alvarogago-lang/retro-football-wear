@@ -478,6 +478,93 @@ function newPasswordForm(recovery) {
     </form>`;
 }
 
+// ---------- OFERTAS ----------
+// model.offer = { active, type: 'percent'|'units'|'time', percent, buy, pay, endsAt }
+//   percent → descuento fijo · units → «lleva N y paga M» (lote) · time → descuento hasta endsAt (cuenta atrás)
+// Cada pedido guarda una copia de la oferta con la que se hizo (order.offer) para que su precio no cambie después.
+const offerActive = (m) => {
+  const o = m?.offer;
+  if (!o?.active) return false;
+  if (o.type === 'time') return new Date(o.endsAt).getTime() > Date.now();
+  return o.type === 'units' ? o.buy > o.pay && o.pay > 0 : o.percent > 0;
+};
+const offerSnapshot = (m) => offerActive(m) ? { type: m.offer.type, percent: m.offer.percent, buy: m.offer.buy, pay: m.offer.pay, endsAt: m.offer.endsAt || null } : null;
+// Precio total de `qty` unidades con la oferta aplicada.
+function offerPrice(offer, unitPrice, qty) {
+  if (!offer) return unitPrice * qty;
+  if (offer.type === 'units') return (Math.floor(qty / offer.buy) * offer.pay + qty % offer.buy) * unitPrice;
+  return Math.round(unitPrice * qty * (100 - offer.percent)) / 100;
+}
+const offerShort = (o) => o.type === 'units' ? `${o.buy}x${o.pay}` : `−${o.percent}%`;
+const offerLong = (o) => o.type === 'units' ? `Oferta ${o.buy}x${o.pay}: lleva ${o.buy} y paga ${o.pay}` : o.type === 'time' ? `−${o.percent}% por tiempo limitado` : `${o.percent}% de descuento`;
+function countdown(endsAt) {
+  const ms = new Date(endsAt).getTime() - Date.now();
+  if (ms <= 0) return 'Finalizada';
+  const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 36e5), min = Math.floor(ms % 36e5 / 6e4), s = Math.floor(ms % 6e4 / 1e3);
+  const p = (n) => String(n).padStart(2, '0');
+  return d ? `Quedan ${d}d ${p(h)}h ${p(min)}m` : `Quedan ${p(h)}:${p(min)}:${p(s)}`;
+}
+// Etiqueta sobre la foto principal (catálogo y modelos del administrador)
+function offerBadge(m) {
+  if (!offerActive(m)) return '';
+  const o = m.offer;
+  return `<div class="rounded-xl bg-brand-600 text-white shadow-lg ring-2 ring-gold-400/80 px-3 py-1.5 leading-tight">
+    <div class="text-[10px] font-bold tracking-[0.18em] text-gold-400">OFERTA</div>
+    <div class="font-serif font-bold text-lg">${offerShort(o)}</div>
+    ${o.type === 'time' ? `<div class="text-[11px] font-semibold tabular-nums" data-ends="${esc(o.endsAt)}">${countdown(o.endsAt)}</div>` : ''}
+  </div>`;
+}
+// Cuenta atrás en vivo; cuando una oferta termina, se vuelve a pintar la pantalla (deja de mostrarse y de aplicarse).
+setInterval(() => {
+  let ended = false;
+  document.querySelectorAll('[data-ends]').forEach(el => {
+    const t = countdown(el.dataset.ends);
+    if (t === 'Finalizada') ended = true;
+    el.textContent = t;
+  });
+  if (ended && !document.getElementById('modal-root').innerHTML) render();
+}, 1000);
+
+function offerForm() {
+  const d = ui.offerDraft, m = modelById(d.modelId);
+  const opt = (k, title, sub) => `<label class="flex items-start gap-3 rounded-xl ring-1 ${d.type === k ? 'ring-brand-600 bg-brand-50' : 'ring-slate-200'} px-3 py-2.5 cursor-pointer">
+      <input type="radio" name="otype" class="mt-1 accent-brand-600" ${d.type === k ? 'checked' : ''} onchange="App.offerSet('type','${k}')">
+      <span><span class="block text-sm font-semibold">${title}</span><span class="block text-xs text-slate-500">${sub}</span></span></label>`;
+  const num = (k, label, min, max, extra = '') => `<label class="text-xs font-semibold text-slate-600">${label}<input type="number" min="${min}" max="${max}" step="1" value="${esc(d[k] ?? '')}" oninput="App.offerSet('${k}',this.value,true)" class="${input} mt-1" ${extra}></label>`;
+  const preview = (() => {
+    const o = { type: d.type, percent: +d.percent, buy: +d.buy, pay: +d.pay };
+    if (d.type === 'units') return o.buy > o.pay && o.pay > 0 ? `Ejemplo: ${o.buy} uds. cuestan ${money(offerPrice(o, m.price, o.buy))} en vez de ${money(m.price * o.buy)}.` : 'Las unidades que paga deben ser menos que las que lleva.';
+    return o.percent > 0 && o.percent < 100 ? `Precio con oferta: ${money(offerPrice(o, m.price, 1))} (antes ${money(m.price)}).` : 'Indica un descuento entre 1 y 99 %.';
+  })();
+  const runningEnds = m.offer?.type === 'time' && m.offer.active && new Date(m.offer.endsAt) > new Date() ? m.offer.endsAt : null;
+  return `<form onsubmit="event.preventDefault();App.saveOffer()">${sheetHead(`Oferta · ${esc(m.name)}`)}
+    <div class="p-5 space-y-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <label class="flex items-center justify-between gap-3 rounded-xl bg-cream-100/70 px-4 py-3 cursor-pointer">
+        <span><span class="block font-semibold">Oferta activa</span><span class="block text-xs text-slate-500">Si la desactivas, el modelo vuelve a su precio normal.</span></span>
+        <input type="checkbox" class="w-5 h-5 accent-brand-600" ${d.active ? 'checked' : ''} onchange="App.offerSet('active',this.checked)">
+      </label>
+      <div class="grid gap-2 ${d.active ? '' : 'opacity-50 pointer-events-none'}">
+        ${opt('percent', 'Descuento', 'Un porcentaje de descuento sobre el precio')}
+        ${opt('units', 'Por unidades (lote)', 'Lleva N y paga M, por ejemplo 3x2')}
+        ${opt('time', 'Tiempo limitado', 'Descuento con cuenta atrás en días u horas')}
+      </div>
+      <div class="grid gap-3 ${d.active ? '' : 'opacity-50 pointer-events-none'}">
+        ${d.type === 'units'
+          ? `<div class="grid grid-cols-2 gap-3">${num('buy', 'Lleva (unidades)', 2, 20)}${num('pay', 'Paga (unidades)', 1, 19)}</div>`
+          : num('percent', 'Descuento (%)', 1, 99)}
+        ${d.type === 'time' ? `
+          ${runningEnds ? `<p class="text-sm text-brand-700 font-semibold">En marcha: <span data-ends="${esc(runningEnds)}">${countdown(runningEnds)}</span></p>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="accent-brand-600" ${d.restart ? 'checked' : ''} onchange="App.offerSet('restart',this.checked)"> Reiniciar la cuenta atrás con la duración de abajo</label>` : ''}
+          <div class="grid grid-cols-2 gap-3 ${runningEnds && !d.restart ? 'opacity-50 pointer-events-none' : ''}">
+            ${num('duration', 'Duración', 1, 999)}
+            <label class="text-xs font-semibold text-slate-600">Unidad<select class="${input} mt-1" onchange="App.offerSet('unit',this.value)"><option value="d" ${d.unit === 'd' ? 'selected' : ''}>Días</option><option value="h" ${d.unit === 'h' ? 'selected' : ''}>Horas</option></select></label>
+          </div>` : ''}
+        <p id="offer-preview" class="text-xs text-slate-500">${preview}</p>
+      </div>
+      <button class="${btnP} w-full !py-2.5">Guardar oferta</button>
+    </div></form>`;
+}
+
 // ---------- USUARIO: catálogo ----------
 function myOrderFor(modelId) { return db.orders.find(o => o.userId === ui.sessionId && o.modelId === modelId); }
 function selFor(m) {
@@ -502,7 +589,7 @@ function renderCatalog() {
   const byText = all.filter(matchQ);                       // los recuentos de los tipos respetan la búsqueda
   const ofType = byText.filter(m => inCat(m, ui.cat));
   if (ui.catModel && !ofType.some(m => m.id === ui.catModel)) ui.catModel = '';
-  const models = ofType.filter(m => !ui.catModel || m.id === ui.catModel);
+  const models = ofType.filter(m => !ui.catModel || m.id === ui.catModel).sort((a, b) => offerActive(b) - offerActive(a)); // las ofertas, siempre primero
   const filtered = q || ui.cat || ui.catModel;
   return `
     <div class="mb-4"><h1 class="text-2xl font-bold">Catálogo</h1><p class="text-sm text-slate-500">Elige talla y cantidad. Puedes tener un pedido por modelo (máx. ${db.settings.maxUnits} uds.).</p></div>
@@ -528,11 +615,12 @@ function renderCard(m) {
   <article class="bg-white rounded-3xl ring-1 ring-slate-200 shadow-sm overflow-hidden flex flex-col">
     <div class="relative aspect-tee bg-slate-100">
       ${imgTag(imgs[s.img % imgs.length], m, 'w-full h-full object-cover')}
-      ${o ? `<div class="absolute top-3 left-3">${badge(o.status)}</div>` : ''}
-      <div class="absolute top-3 right-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold shadow">${money(m.price)}</div>
+      <div class="absolute top-3 left-3 flex flex-col items-start gap-2">${offerBadge(m)}${o ? badge(o.status) : ''}</div>
+      <div class="absolute top-3 right-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold shadow">${offerActive(m) && m.offer.type !== 'units' ? `<s class="text-slate-400 font-normal mr-1">${money(m.price)}</s><span class="text-brand-700">${money(offerPrice(m.offer, m.price, 1))}</span>` : money(m.price)}</div>
       ${imgs.length > 1 ? `<div class="absolute bottom-3 inset-x-0 flex justify-center gap-1.5">${imgs.map((_, i) => `<button onclick="App.pickImg('${m.id}',${i})" class="w-2.5 h-2.5 rounded-full ${i === s.img % imgs.length ? 'bg-white' : 'bg-white/50'} ring-1 ring-black/10" aria-label="Foto ${i + 1}"></button>`).join('')}</div>` : ''}
     </div>
     <div class="p-5 flex-1 flex flex-col gap-3">
+      ${offerActive(m) ? `<div class="rounded-xl bg-brand-50 ring-1 ring-brand-100 px-3 py-2 text-sm font-semibold text-brand-700">🏷 ${offerLong(m.offer)}</div>` : ''}
       <div>${catTag(m)}<h3 class="font-bold text-lg leading-tight mt-1.5">${esc(m.name)}</h3><p class="text-sm text-slate-500 mt-1">${esc(m.description)}</p></div>
       <div class="grid grid-cols-4 gap-2">
         ${SIZES.map(sz => {
@@ -548,7 +636,7 @@ function renderCard(m) {
         }).join('')}
       </div>
       <div class="mt-auto pt-2 flex items-center gap-2">
-        <div class="text-sm text-slate-500 flex-1">${total} ud${total === 1 ? '' : 's'} · <b class="text-slate-800">${money(total * m.price)}</b></div>
+        <div class="text-sm text-slate-500 flex-1">${total} ud${total === 1 ? '' : 's'} · <b class="text-slate-800">${money(locked ? orderTotal(o) : offerPrice(offerSnapshot(m), m.price, total))}</b>${!locked && offerActive(m) && total && offerPrice(offerSnapshot(m), m.price, total) < total * m.price ? ` <s class="text-xs text-slate-400">${money(total * m.price)}</s>` : ''}</div>
         ${locked
           ? `<span class="text-xs text-pitch-700 font-semibold">Pedido pagado ✓</span>`
           : o
@@ -588,7 +676,7 @@ function renderMyOrders() {
       }).join('')}
     </div>`;
 }
-const orderTotal = (o) => (o.unitPrice ?? modelById(o.modelId)?.price ?? 0) * units(o.items);
+const orderTotal = (o) => offerPrice(o.offer, o.unitPrice ?? modelById(o.modelId)?.price ?? 0, units(o.items));
 
 // ---------- ADMIN: panel ----------
 function renderPanel() {
@@ -897,7 +985,7 @@ function renderModels() {
       ${models.map(m => {
         const n = db.orders.filter(o => o.modelId === m.id);
         return `<article class="bg-white rounded-2xl ring-1 ring-slate-200 overflow-hidden">
-          <div class="aspect-tee bg-slate-100 relative">${imgTag(m.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}
+          <div class="aspect-tee bg-slate-100 relative">${imgTag(m.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}<div class="absolute top-3 left-3">${offerBadge(m)}</div>
             <span class="absolute bottom-2 right-2 rounded-full bg-black/60 text-white text-xs px-2 py-0.5">${m.images.length} foto${m.images.length === 1 ? '' : 's'}</span></div>
           <div class="p-4">
             ${catTag(m)}
@@ -906,6 +994,7 @@ function renderModels() {
             <div class="flex flex-wrap gap-1 mt-2">${SIZES.map(s => `<span class="text-[11px] font-semibold rounded px-1.5 py-0.5 ${m.sizes.includes(s) ? 'bg-slate-100 text-slate-700' : 'text-slate-300 line-through'}">${s}</span>`).join('')}</div>
             <div class="text-xs text-slate-500 mt-2">${n.length} pedidos · ${n.reduce((a, o) => a + units(o.items), 0)} uds.</div>
             <div class="flex gap-2 mt-3"><button class="${btnS} flex-1" onclick="App.editModel('${m.id}')">${ic.edit} Editar</button><button class="${btnS}" onclick="App.announceModel('${m.id}')" title="Avisar a todos los usuarios (notificación y email desde tu correo)" aria-label="Avisar a los usuarios">📣</button><button class="${btnD}" onclick="App.deleteModel('${m.id}')" title="Eliminar modelo obsoleto">${ic.trash}</button></div>
+            <button class="${offerActive(m) ? btnP : btnS} w-full mt-2" onclick="App.editOffer('${m.id}')">🏷 Oferta${offerActive(m) ? ` · ${offerShort(m.offer)} activa` : ''}</button>
           </div></article>`;
       }).join('') || empty(all.length ? 'No hay modelos de este tipo' : 'No hay modelos publicados', 'Pulsa «Nuevo modelo» para añadir uno.')}
     </div>`;
@@ -1383,6 +1472,38 @@ const App = {
     t.readAdmin = true; save(); render();
     toast(t.status === 'cerrada' ? 'Consulta marcada como resuelta' : 'Consulta reabierta', 'info');
   },
+  // --- ofertas ---
+  editOffer(id) {
+    const o = modelById(id).offer || {};
+    ui.offerDraft = { modelId: id, active: !!o.active, type: o.type || 'percent', percent: o.percent ?? 15, buy: o.buy ?? 3, pay: o.pay ?? 2, duration: 3, unit: 'd', restart: false };
+    openModal(offerForm());
+  },
+  offerSet(k, v, keepFocus) {
+    ui.offerDraft[k] = v;
+    if (!keepFocus) return openModal(offerForm());
+    const p = document.getElementById('offer-preview'); // al escribir números solo se actualiza el ejemplo, sin perder el foco
+    if (p) { const tmp = document.createElement('div'); tmp.innerHTML = offerForm(); p.innerHTML = tmp.querySelector('#offer-preview').innerHTML; }
+  },
+  saveOffer() {
+    const d = ui.offerDraft, m = modelById(d.modelId), prev = m.offer || {};
+    const percent = Math.round(+d.percent), buy = Math.round(+d.buy), pay = Math.round(+d.pay), dur = Math.round(+d.duration);
+    if (d.active) {
+      if (d.type === 'units' && !(buy >= 2 && pay >= 1 && pay < buy)) return toast('En el lote, las unidades que paga deben ser menos que las que lleva (p. ej. 3x2)', 'error');
+      if (d.type !== 'units' && !(percent >= 1 && percent <= 99)) return toast('El descuento debe estar entre 1 y 99 %', 'error');
+    }
+    const running = prev.type === 'time' && prev.active && new Date(prev.endsAt) > new Date();
+    let endsAt = null;
+    if (d.type === 'time') {
+      if (running && !d.restart) endsAt = prev.endsAt;
+      else {
+        if (!(dur >= 1)) return toast('Indica la duración de la oferta', 'error');
+        endsAt = new Date(Date.now() + dur * (d.unit === 'h' ? 36e5 : 864e5)).toISOString();
+      }
+    }
+    m.offer = { active: !!d.active, type: d.type, percent: d.type === 'units' ? null : percent, buy: d.type === 'units' ? buy : null, pay: d.type === 'units' ? pay : null, endsAt };
+    save(); closeModal(); render();
+    toast(d.active ? `Oferta activada: ${offerShort(m.offer)}${endsAt ? ' · ' + countdown(endsAt).toLowerCase() : ''}` : 'Oferta desactivada', 'ok');
+  },
   async testMail(b) {
     b.disabled = true; b.textContent = 'Enviando…';
     const r = await callMail({ type: 'test' });
@@ -1535,10 +1656,10 @@ const App = {
     let o = myOrderFor(mid);
     if (o?.status === 'pagado') return toast('Este pedido ya está pagado y no se puede modificar', 'error');
     const now = new Date().toISOString();
-    if (o) { o.items = items; o.unitPrice = m.price; o.modelName = m.name; o.updatedAt = now; o.confirmation = null; toast('Pedido actualizado');
+    if (o) { o.items = items; o.unitPrice = m.price; o.offer = offerSnapshot(m); o.modelName = m.name; o.updatedAt = now; o.confirmation = null; toast('Pedido actualizado');
       alertAdmins('pedido', o, `Pedido modificado: ${m.name}`, `${me().name} ha modificado su pedido de ${m.name}.
 Ahora: ${itemsText(items)} · ${money(orderTotal(o))} · pendiente de pago.`); }
-    else { db.orders.push({ id: uid('o'), userId: ui.sessionId, modelId: mid, modelName: m.name, unitPrice: m.price, items, status: 'pendiente', createdAt: now, updatedAt: now, payment: null }); toast('¡Solicitud enviada al administrador!');
+    else { db.orders.push({ id: uid('o'), userId: ui.sessionId, modelId: mid, modelName: m.name, unitPrice: m.price, offer: offerSnapshot(m), items, status: 'pendiente', createdAt: now, updatedAt: now, payment: null }); toast('¡Solicitud enviada al administrador!');
       const no = db.orders.at(-1);
       alertAdmins('pedido', no, `Nuevo pedido: ${m.name}`, `${me().name} ha solicitado ${m.name} (${catName(catOf(m))}).
 Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`); }

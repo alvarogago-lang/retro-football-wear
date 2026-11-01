@@ -1057,6 +1057,11 @@ function renderSettings() {
         <h2 class="font-semibold">Datos en la nube</h2>
         <p class="text-sm text-slate-500">Pedidos, usuarios, modelos y fotos se guardan en Supabase y se sincronizan al momento entre todos los dispositivos. Los cambios de otros usuarios aparecen sin recargar.</p>
         <p class="text-xs text-slate-400">Antes de usar la app de verdad, desactiva o elimina las cuentas de prueba (emails @ejemplo.com) en la pestaña Usuarios.</p>
+        <div class="pt-3 border-t border-slate-100">
+          <h2 class="font-semibold">Correo de la app</h2>
+          <p class="text-sm text-slate-500 mt-1">Los emails salen desde <b>laprimamery@gmail.com</b>. Envíate uno de prueba para comprobar que funciona.</p>
+          <button class="${btnS} mt-2" onclick="App.testMail(this)">✉ Enviarme un email de prueba</button>
+        </div>
       </div>
     </div>`;
 }
@@ -1377,6 +1382,12 @@ const App = {
     t.status = t.status === 'cerrada' ? (t.messages.at(-1).from === 'admin' ? 'respondida' : 'abierta') : 'cerrada';
     t.readAdmin = true; save(); render();
     toast(t.status === 'cerrada' ? 'Consulta marcada como resuelta' : 'Consulta reabierta', 'info');
+  },
+  async testMail(b) {
+    b.disabled = true; b.textContent = 'Enviando…';
+    const r = await callMail({ type: 'test' });
+    b.disabled = false; b.textContent = '✉ Enviarme un email de prueba';
+    toast(r.ok ? `Email de prueba enviado a ${me().email}. Revisa tu bandeja (y el spam).` : r.notConfigured ? 'Falta la contraseña de aplicación (SMTP_PASS) en Supabase.' : r.error, r.ok ? 'ok' : 'error');
   },
   openInvite() { openModal(inviteSheet()); },
   async sendInvite(form) {

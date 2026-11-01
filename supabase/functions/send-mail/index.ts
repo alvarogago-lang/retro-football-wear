@@ -5,8 +5,11 @@
 //   contact   → mensaje del usuario a todos los administradores activos (copia oculta a la cuenta de la app)
 //   reply     → mensaje de un administrador al usuario (copia oculta a la cuenta de la app y al resto de admins)
 //   broadcast → { modelId, kind: 'new-model' | 'offer' } modelo nuevo u oferta a todos los usuarios activos (CCO, tandas de 50)
-//   order     → «Hemos recibido tu pedido» al usuario que lo hace
-//   confirm   → confirmación del administrador (mensaje y plazo de entrega opcional) al usuario del pedido
+//   order       → solicitud nueva: «Hemos recibido tu solicitud» al usuario y aviso a los administradores
+//   approve     → el administrador aprueba la solicitud: instrucciones de pago (texto fijo) e importe al usuario
+//   paid-notice → el usuario dice que ya ha pagado: el pedido pasa a «pago_comunicado» y se avisa a los administradores
+//   confirm     → el administrador valida el pago: fecha de entrega al usuario
+//   (todos con copia oculta a la cuenta de La Prima Mery)
 //   invite   → invitación de un usuario a un amigo, con enlace a «Crear cuenta» (máx. 10 al día por usuario)
 //   test     → email de prueba al administrador que la llama
 //
@@ -28,6 +31,9 @@ const json = (body: unknown, status = 200) =>
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const nl2br = (s: unknown) => esc(s).replace(/\n/g, '<br>');
 const isEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
+// Pago fuera de la app (mismo texto que en index.html)
+const PAYPAL_ACCOUNT = 'daniordo191119@icloud.com';
+const APPROVAL_TEXT = `Su solicitud ha sido aprobada. Para finalizar el pedido haga el depósito a través de PayPal a la cuenta ${PAYPAL_ACCOUNT}. Una vez realizado el pago solicite en sus pedidos la confirmación del mismo y en cuanto reciba la notificación de que el pago se ha realizado de forma correcta recibirá el producto en la fecha que el admin indique al validar la confirmación del pago.`;
 const isTestAddress = (e: string) => /@(ejemplo|example)\.(com|org|net)$/i.test(e);
 
 // Plantilla común con la imagen de La Prima Mery
@@ -144,35 +150,72 @@ Deno.serve(async (req) => {
       return json({ sent: list.length });
     }
 
-    // Pedido hecho: al usuario (copia oculta a La Prima Mery).
-    // Confirmación del administrador (con plazo de entrega opcional): al usuario del pedido.
-    if (body.type === 'order' || body.type === 'confirm') {
+    // Pedidos: solicitud, aprobación, aviso de pago del usuario y validación del pago.
+    if (['order', 'approve', 'paid-notice', 'confirm'].includes(body.type)) {
       const { data: row } = await admin.from('orders').select('data').eq('id', body.orderId).single();
       if (!row) return json({ error: 'Pedido no encontrado' }, 404);
       const o = row.data;
-      if (body.type === 'order' && o.userId !== me.id) return json({ error: 'No es tu pedido' }, 403);
-      if (body.type === 'confirm' && !isAdmin) return json({ error: 'Solo administradores' }, 403);
-      const { data: owner } = await admin.from('profiles').select('name, email').eq('id', o.userId).single();
-      if (!owner?.email || isTestAddress(owner.email)) return json({ sent: 0 });
+      const ownerOnly = body.type === 'order' || body.type === 'paid-notice';
+      if (ownerOnly && o.userId !== me.id) return json({ error: 'No es tu pedido' }, 403);
+      if (!ownerOnly && !isAdmin) return json({ error: 'Solo administradores' }, 403);
+      const { data: owner } = await admin.from('profiles').select('name, username, email').eq('id', o.userId).single();
       const total = offerPrice(o.offer, Number(o.unitPrice), units(o.items));
       const summary = `<table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 12px;font-size:14px">
         <tr><td style="padding:6px 0;color:#64748b">Modelo</td><td style="padding:6px 0;text-align:right"><b>${esc(o.modelName)}</b></td></tr>
         <tr><td style="padding:6px 0;color:#64748b">Tallas</td><td style="padding:6px 0;text-align:right">${esc(itemsText(o.items))}</td></tr>
         ${o.offer ? `<tr><td style="padding:6px 0;color:#64748b">Oferta</td><td style="padding:6px 0;text-align:right">${esc(offerText(o.offer))}</td></tr>` : ''}
-        <tr><td style="padding:6px 0;color:#64748b">Total</td><td style="padding:6px 0;text-align:right;font-size:16px"><b>${money(total)}</b></td></tr></table>`;
-      const hi = `<p style="margin:0 0 10px">Hola ${esc((owner.name || '').split(' ')[0])}:</p>`;
+        <tr><td style="padding:6px 0;color:#64748b">Importe</td><td style="padding:6px 0;text-align:right;font-size:16px"><b>${money(total)}</b></td></tr></table>`;
+      const hi = `<p style="margin:0 0 10px">Hola ${esc((owner?.name || '').split(' ')[0])}:</p>`;
+      const btn = appUrl ? { href: appUrl, text: 'Ver mis pedidos' } : undefined;
+      const adminBtn = appUrl ? { href: appUrl, text: 'Abrir la app' } : undefined;
+      const toUser = owner?.email && !isTestAddress(owner.email);
+      const admins = (await activeAdmins()).map((a) => a.email);
+      const toAdmins = (subject: string, html: string) => send(admins.length ? admins : [from], subject, html, owner?.email, admins.length ? [from] : undefined);
+      const who = `<b>${esc(owner?.name)}</b> (@${esc(owner?.username)})`;
+
       if (body.type === 'order') {
-        await send(owner.email, `Hemos recibido tu pedido · La Prima Mery`,
-          layout('Hemos recibido tu pedido', `${hi}<p style="margin:0 0 12px">Gracias por tu pedido. Estos son los detalles:</p>${summary}
-            <p style="margin:0">${o.status === 'pagado' ? 'Ya está pagado.' : 'Puedes pagarlo desde «Mis pedidos» en la app.'} Te avisaremos cuando lo confirmemos${o.status === 'pagado' ? '' : ''} y, si es posible, del plazo de entrega.</p>`,
-            appUrl ? { href: appUrl, text: 'Ver mis pedidos' } : undefined), undefined, [from]);
-      } else {
-        const c = o.confirmation || {};
-        await send(owner.email, `Pedido confirmado: ${o.modelName} · La Prima Mery`,
-          layout('Tu pedido está confirmado', `${hi}${c.message ? quote(c.message) : ''}${summary}
-            ${c.eta ? `<p style="margin:0;font-size:16px"><b>Tiempo estimado de entrega:</b> ${esc(c.eta)}</p>` : ''}`,
-            appUrl ? { href: appUrl, text: 'Ver mis pedidos' } : undefined), undefined, [from]);
+        let sent = 0;
+        if (toUser) {
+          await send(owner.email, 'Hemos recibido tu solicitud · La Prima Mery',
+            layout('Hemos recibido tu solicitud', `${hi}<p style="margin:0 0 12px">Gracias por tu solicitud. Estos son los detalles:</p>${summary}
+              <p style="margin:0">Te avisaremos cuando la aprobemos, con las instrucciones para hacer el pago.</p>`, btn), undefined, [from]);
+          sent++;
+        }
+        await toAdmins(`[La Prima Mery] Nueva solicitud de ${owner?.name}: ${o.modelName}`,
+          layout('Nueva solicitud', `<p style="margin:0 0 10px">${who} ha solicitado:</p>${summary}<p style="margin:0">Apruébala en la pestaña Pedidos de la app.</p>`, adminBtn));
+        return json({ sent: sent + 1 });
       }
+
+      if (body.type === 'approve') {
+        if (!toUser) return json({ sent: 0 });
+        const extra = o.approval?.message ? quote(o.approval.message) : '';
+        await send(owner.email, `Solicitud aprobada: ${o.modelName} · La Prima Mery`,
+          layout('Su solicitud ha sido aprobada', `${hi}<p style="margin:0 0 12px">${esc(APPROVAL_TEXT)}</p>${summary}${extra}`, btn), undefined, [from]);
+        return json({ sent: 1 });
+      }
+
+      if (body.type === 'paid-notice') {
+        if (o.status !== 'aprobado') return json({ error: 'Este pedido no está pendiente de pago' }, 409);
+        const now = new Date().toISOString();
+        const { error } = await admin.from('orders').update({ data: { ...o, status: 'pago_comunicado', paymentNotice: { at: now }, updatedAt: now } }).eq('id', o.id);
+        if (error) return json({ error: error.message }, 500);
+        try {
+          await toAdmins(`[La Prima Mery] Pago comunicado por ${owner?.name}: ${o.modelName}`,
+            layout('Un usuario dice que ya ha pagado', `<p style="margin:0 0 10px">${who} dice que ya ha hecho el depósito por PayPal a ${esc(PAYPAL_ACCOUNT)}:</p>${summary}
+              <p style="margin:0">Comprueba que el pago ha llegado y valídalo en la pestaña Pedidos indicando la fecha de entrega.</p>`, adminBtn));
+        } catch (e) {
+          return json({ statusChanged: true, mailError: String((e as Error)?.message ?? e) });
+        }
+        return json({ statusChanged: true, sent: 1 });
+      }
+
+      // confirm: pago validado
+      if (!toUser) return json({ sent: 0 });
+      const d = o.delivery || {};
+      const when = d.date ? new Date(d.date + 'T12:00:00Z').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Madrid' }) : '';
+      await send(owner.email, `Pago confirmado: ${o.modelName} · La Prima Mery`,
+        layout('El pago se ha realizado correctamente', `${hi}<p style="margin:0 0 12px">Hemos comprobado el pago de tu pedido.</p>${summary}
+          ${when ? `<p style="margin:0 0 12px;font-size:16px"><b>Recibirás el producto el ${esc(when)}.</b></p>` : ''}${d.message ? quote(d.message) : ''}`, btn), undefined, [from]);
       return json({ sent: 1 });
     }
 

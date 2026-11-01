@@ -9,8 +9,8 @@
 //
 // Secretos (Supabase → Edge Functions → Secrets):
 //   SMTP_PASS       contraseña de aplicación de Google de la cuenta remitente (la pega el usuario)
-//   MAIL_FROM       laprimamery@gmail.com          MAIL_FROM_NAME  La Prima Mery (opcional)
-//   SMTP_HOST / SMTP_PORT / SMTP_USER  opcionales: smtp.gmail.com / 465 / MAIL_FROM
+//   MAIL_SENDER     (opcional) remitente; por defecto laprimamery@gmail.com   MAIL_FROM_NAME  La Prima Mery (opcional)
+//   SMTP_HOST / SMTP_PORT / SMTP_USER  opcionales: smtp.gmail.com / 465 / remitente
 import nodemailer from 'npm:nodemailer@6.9.16';
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4';
 
@@ -57,8 +57,8 @@ Deno.serve(async (req) => {
     if (!me?.active || me.pending) return json({ error: 'Tu cuenta no está activa' }, 403);
     const isAdmin = me.role === 'admin';
 
-    const from = env('MAIL_FROM'), pass = env('SMTP_PASS');
-    if (!from || !pass) return json({ error: 'El correo de la app aún no está configurado.', notConfigured: true }, 503);
+    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = env('SMTP_PASS');
+    if (!pass) return json({ error: 'El correo de la app aún no está configurado.', notConfigured: true }, 503);
     const transport = nodemailer.createTransport({
       host: env('SMTP_HOST') || 'smtp.gmail.com', port: Number(env('SMTP_PORT') || 465), secure: true,
       auth: { user: env('SMTP_USER') || from, pass },

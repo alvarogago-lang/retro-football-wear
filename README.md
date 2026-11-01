@@ -65,3 +65,9 @@ En Modelos, el botón **Oferta** (debajo de Editar) activa o desactiva una ofert
 
 - El usuario paga con su cuenta PayPal o con tarjeta. El **servidor** (Edge Function `supabase/functions/paypal`) crea el cobro con el importe calculado a partir del pedido (ofertas incluidas) y lo confirma con PayPal; solo entonces el pedido pasa a **Pagado**, se registra el pago (cuenta PayPal, transacción) y se avisa a los administradores.
 - Configuración desde la app, **Ajustes → Pagos con PayPal**: modo Real o Pruebas, **Client ID** y **Secret** (de developer.paypal.com → Apps & Credentials, con una cuenta PayPal Business). El Secret se guarda en la tabla protegida `app_secrets` (migración `supabase/006_secretos.sql`), que solo lee la Edge Function. El botón «Probar conexión» comprueba las credenciales.
+
+## Emails automáticos (desde laprimamery@gmail.com)
+
+- **Modelo nuevo** y **oferta activada o cambiada** → a todos los usuarios activos (copia oculta, tandas de 50) + notificación en la app.
+- **Pedido hecho** → «Hemos recibido tu pedido» al usuario. **Confirmación** del administrador (con plazo de entrega opcional) → al usuario.
+- **Mensajes**: el administrador puede iniciar una conversación (Mensajes → Nueva conversación). Cada mensaje llega por la app y por email al usuario y a los administradores, con copia oculta a laprimamery@gmail.com.

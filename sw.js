@@ -1,5 +1,5 @@
 // Service worker de La Prima Mery: permite instalar la app y abrirla sin conexión.
-const CACHE = 'lpm-v9';
+const CACHE = 'lpm-v10';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest',
   'icons/lpm-192.png', 'icons/lpm-512.png', 'icons/lpm-apple-touch-icon.png',

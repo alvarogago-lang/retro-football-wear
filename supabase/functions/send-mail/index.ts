@@ -2,8 +2,11 @@
 // Envía los emails de la app desde la cuenta de Gmail de La Prima Mery (SMTP, puerto 465).
 //
 // Tipos (body.type):
-//   contact  → la consulta (o la nueva respuesta del usuario) a todos los administradores activos
-//   reply    → la respuesta de un administrador al usuario de la consulta
+//   contact   → mensaje del usuario a todos los administradores activos (copia oculta a la cuenta de la app)
+//   reply     → mensaje de un administrador al usuario (copia oculta a la cuenta de la app y al resto de admins)
+//   broadcast → { modelId, kind: 'new-model' | 'offer' } modelo nuevo u oferta a todos los usuarios activos (CCO, tandas de 50)
+//   order     → «Hemos recibido tu pedido» al usuario que lo hace
+//   confirm   → confirmación del administrador (mensaje y plazo de entrega opcional) al usuario del pedido
 //   invite   → invitación de un usuario a un amigo, con enlace a «Crear cuenta» (máx. 10 al día por usuario)
 //   test     → email de prueba al administrador que la llama
 //
@@ -65,11 +68,20 @@ Deno.serve(async (req) => {
       auth: { user: env('SMTP_USER') || from, pass },
     });
     const sender = { name: env('MAIL_FROM_NAME') || 'La Prima Mery', address: from };
-    const send = (to: string | string[], subject: string, html: string, replyTo?: string) =>
-      transport.sendMail({ from: sender, to, subject, html, replyTo });
+    const send = (to: string | string[], subject: string, html: string, replyTo?: string, bcc?: string[]) =>
+      transport.sendMail({ from: sender, to, subject, html, replyTo, bcc: bcc?.length ? bcc : undefined });
 
     const body = await req.json();
     const appUrl = String(body.appUrl || '').split('?')[0];
+    const money = (n: number) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(n || 0);
+    const absUrl = (src: string) => { try { return new URL(src, appUrl || undefined).href; } catch { return ''; } };
+    const SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL'];
+    const units = (it: Record<string, number>) => SIZES.reduce((a, s) => a + (Number(it?.[s]) || 0), 0);
+    const itemsText = (it: Record<string, number>) => SIZES.filter((s) => it?.[s]).map((s) => `${s}×${it[s]}`).join(', ');
+    const offerPrice = (o: any, p: number, q: number) => !o ? p * q : o.type === 'units' ? (Math.floor(q / o.buy) * o.pay + q % o.buy) * p : Math.round(p * q * (100 - o.percent)) / 100;
+    const offerText = (o: any) => o.type === 'units' ? `${o.buy}x${o.pay}: lleva ${o.buy} y paga ${o.pay}` : `${o.percent}% de descuento${o.type === 'time' && o.endsAt ? ` hasta el ${new Date(o.endsAt).toLocaleString('es-ES', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Madrid' })}` : ''}`;
+    const activeAdmins = async () => ((await admin.from('profiles').select('id, email').eq('role', 'admin').eq('active', true).eq('pending', false)).data ?? [])
+      .filter((a) => a.email && !isTestAddress(a.email));
 
     if (body.type === 'test') {
       if (!isAdmin) return json({ error: 'Solo administradores' }, 403);
@@ -84,24 +96,83 @@ Deno.serve(async (req) => {
       if (!last) return json({ error: 'Consulta vacía' }, 400);
       const { data: owner } = await admin.from('profiles').select('name, email').eq('id', t.userId).single();
 
+      // Todos los mensajes llegan también, en copia oculta, a la cuenta de La Prima Mery.
+      const admins = (await activeAdmins()).map((a) => a.email);
       if (body.type === 'contact') {
         if (t.userId !== me.id) return json({ error: 'No es tu consulta' }, 403);
-        const { data: admins } = await admin.from('profiles').select('email').eq('role', 'admin').eq('active', true).eq('pending', false);
-        const to = (admins ?? []).map((a) => a.email).filter((e) => e && !isTestAddress(e));
-        if (!to.length) return json({ sent: 0 });
         const first = (t.messages ?? []).length === 1;
-        await send(to, `[La Prima Mery] ${first ? 'Nueva consulta' : 'Nueva respuesta'} de ${me.name}: ${t.subject}`,
-          layout(first ? 'Nueva consulta' : 'El usuario ha respondido',
-            `<p style="margin:0 0 10px"><b>${esc(me.name)}</b> (@${esc(me.username)}) ${first ? 'ha enviado una consulta' : 'ha escrito en su consulta'} «<b>${esc(t.subject)}</b>»:</p>${quote(last.body)}`,
+        const to = admins.length ? admins : [from];
+        await send(to, `[La Prima Mery] ${first ? 'Nueva consulta' : 'Nuevo mensaje'} de ${me.name}: ${t.subject}`,
+          layout(first ? 'Nueva consulta' : 'Nuevo mensaje del usuario',
+            `<p style="margin:0 0 10px"><b>${esc(me.name)}</b> (@${esc(me.username)}) ${first ? 'ha enviado una consulta' : 'ha escrito en su conversación'} «<b>${esc(t.subject)}</b>»:</p>${quote(last.body)}`,
             appUrl ? { href: appUrl, text: 'Responder en la app' } : undefined),
-          me.email);
+          me.email, [from]);
         return json({ sent: to.length });
       }
       if (!isAdmin) return json({ error: 'Solo administradores' }, 403);
       if (!owner?.email || isTestAddress(owner.email)) return json({ sent: 0 });
-      await send(owner.email, `[La Prima Mery] Respuesta a tu consulta: ${t.subject}`,
-        layout('Tienes una respuesta', `<p style="margin:0 0 10px">Hola ${esc((owner.name || '').split(' ')[0])}, te hemos respondido a tu consulta «<b>${esc(t.subject)}</b>»:</p>${quote(last.body)}`,
-          appUrl ? { href: appUrl, text: 'Ver la conversación' } : undefined));
+      const started = (t.messages ?? []).length === 1; // conversación iniciada por un administrador
+      await send(owner.email, `[La Prima Mery] ${started ? 'Mensaje' : 'Respuesta'}: ${t.subject}`,
+        layout(started ? 'Tienes un mensaje de La Prima Mery' : 'Tienes una respuesta',
+          `<p style="margin:0 0 10px">Hola ${esc((owner.name || '').split(' ')[0])}, ${started ? 'te escribimos sobre' : 'te hemos respondido en'} «<b>${esc(t.subject)}</b>»:</p>${quote(last.body)}`,
+          appUrl ? { href: appUrl, text: 'Ver la conversación y responder' } : undefined),
+        undefined, [from, ...admins.filter((e) => e !== me.email)]);
+      return json({ sent: 1 });
+    }
+
+    // Modelo nuevo u oferta: a todos los usuarios activos, en copia oculta y por tandas.
+    if (body.type === 'broadcast') {
+      if (!isAdmin) return json({ error: 'Solo administradores' }, 403);
+      const { data: row } = await admin.from('models').select('data').eq('id', body.modelId).single();
+      if (!row) return json({ error: 'Modelo no encontrado' }, 404);
+      const m = row.data, isOffer = body.kind === 'offer';
+      if (isOffer && !m.offer?.active) return json({ error: 'El modelo no tiene una oferta activa' }, 400);
+      const { data: users } = await admin.from('profiles').select('email').eq('active', true).eq('pending', false).neq('role', 'admin');
+      const list = [...new Set((users ?? []).map((u) => u.email).filter((e) => e && !isTestAddress(e)))];
+      if (!list.length) return json({ sent: 0 });
+      const cover = m.images?.[0] ? absUrl(m.images[0]) : '';
+      const price = isOffer && m.offer.type !== 'units'
+        ? `<s style="color:#94a3b8;font-weight:normal">${money(m.price)}</s> ${money(offerPrice(m.offer, m.price, 1))}` : money(m.price);
+      const html = layout(isOffer ? `¡Oferta en ${m.name}!` : `Nuevo modelo: ${m.name}`,
+        `${cover ? `<img src="${esc(cover)}" alt="${esc(m.name)}" width="492" style="display:block;width:100%;height:auto;border-radius:12px;margin:0 0 14px">` : ''}
+         ${isOffer ? `<p style="margin:0 0 10px;display:inline-block;background:#7b1e2e;color:#fff;font-weight:bold;padding:6px 12px;border-radius:8px">OFERTA · ${esc(offerText(m.offer))}</p>` : ''}
+         <p style="margin:0 0 10px">${esc(m.description)}</p>
+         <p style="margin:0;font-size:18px;font-weight:bold">${price}</p>`,
+        appUrl ? { href: appUrl, text: 'Ver y pedir mi talla' } : undefined);
+      const subject = isOffer ? `Oferta en La Prima Mery: ${m.name}` : `Nuevo modelo en La Prima Mery: ${m.name}`;
+      for (let i = 0; i < list.length; i += 50) await send(from, subject, html, undefined, list.slice(i, i + 50));
+      return json({ sent: list.length });
+    }
+
+    // Pedido hecho: al usuario (copia oculta a La Prima Mery).
+    // Confirmación del administrador (con plazo de entrega opcional): al usuario del pedido.
+    if (body.type === 'order' || body.type === 'confirm') {
+      const { data: row } = await admin.from('orders').select('data').eq('id', body.orderId).single();
+      if (!row) return json({ error: 'Pedido no encontrado' }, 404);
+      const o = row.data;
+      if (body.type === 'order' && o.userId !== me.id) return json({ error: 'No es tu pedido' }, 403);
+      if (body.type === 'confirm' && !isAdmin) return json({ error: 'Solo administradores' }, 403);
+      const { data: owner } = await admin.from('profiles').select('name, email').eq('id', o.userId).single();
+      if (!owner?.email || isTestAddress(owner.email)) return json({ sent: 0 });
+      const total = offerPrice(o.offer, Number(o.unitPrice), units(o.items));
+      const summary = `<table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 12px;font-size:14px">
+        <tr><td style="padding:6px 0;color:#64748b">Modelo</td><td style="padding:6px 0;text-align:right"><b>${esc(o.modelName)}</b></td></tr>
+        <tr><td style="padding:6px 0;color:#64748b">Tallas</td><td style="padding:6px 0;text-align:right">${esc(itemsText(o.items))}</td></tr>
+        ${o.offer ? `<tr><td style="padding:6px 0;color:#64748b">Oferta</td><td style="padding:6px 0;text-align:right">${esc(offerText(o.offer))}</td></tr>` : ''}
+        <tr><td style="padding:6px 0;color:#64748b">Total</td><td style="padding:6px 0;text-align:right;font-size:16px"><b>${money(total)}</b></td></tr></table>`;
+      const hi = `<p style="margin:0 0 10px">Hola ${esc((owner.name || '').split(' ')[0])}:</p>`;
+      if (body.type === 'order') {
+        await send(owner.email, `Hemos recibido tu pedido · La Prima Mery`,
+          layout('Hemos recibido tu pedido', `${hi}<p style="margin:0 0 12px">Gracias por tu pedido. Estos son los detalles:</p>${summary}
+            <p style="margin:0">${o.status === 'pagado' ? 'Ya está pagado.' : 'Puedes pagarlo desde «Mis pedidos» en la app.'} Te avisaremos cuando lo confirmemos${o.status === 'pagado' ? '' : ''} y, si es posible, del plazo de entrega.</p>`,
+            appUrl ? { href: appUrl, text: 'Ver mis pedidos' } : undefined), undefined, [from]);
+      } else {
+        const c = o.confirmation || {};
+        await send(owner.email, `Pedido confirmado: ${o.modelName} · La Prima Mery`,
+          layout('Tu pedido está confirmado', `${hi}${c.message ? quote(c.message) : ''}${summary}
+            ${c.eta ? `<p style="margin:0;font-size:16px"><b>Tiempo estimado de entrega:</b> ${esc(c.eta)}</p>` : ''}`,
+            appUrl ? { href: appUrl, text: 'Ver mis pedidos' } : undefined), undefined, [from]);
+      }
       return json({ sent: 1 });
     }
 

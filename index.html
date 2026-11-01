@@ -944,10 +944,24 @@ function renderMessages() {
   const chip = (k, l, n) => `<button onclick="App.msgFilter('${k}')" class="rounded-full px-3.5 py-1.5 text-sm font-semibold ring-1 ${filter === k ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200'}">${l} <span class="${filter === k ? 'text-white/60' : 'text-slate-400'}">${n}</span></button>`;
   return `
     <div class="flex flex-wrap items-end gap-3 mb-4">
-      <div class="flex-1"><h1 class="text-2xl font-bold">Mensajes</h1><p class="text-sm text-slate-500">Consultas de los usuarios. Tu respuesta les llega por notificación y por email.</p></div>
+      <div class="flex-1 min-w-[200px]"><h1 class="text-2xl font-bold">Mensajes</h1><p class="text-sm text-slate-500">Conversaciones con los usuarios. Cada mensaje llega por la app y por email (con copia a ${CONTACT_EMAIL}).</p></div>
+      <button class="${btnP}" onclick="App.openNewThread()">${ic.plus} Nueva conversación</button>
     </div>
     <div class="flex gap-2 mb-4">${chip('abiertas', 'Abiertas', all.filter(t => t.status !== 'cerrada').length)}${chip('todas', 'Todas', all.length)}</div>
-    <div class="grid gap-3">${list.map(t => threadCard(t, true)).join('') || '<p class="text-sm text-slate-400 bg-white rounded-2xl ring-1 ring-slate-200 p-6 text-center">No hay consultas.</p>'}</div>`;
+    <div class="grid gap-3">${list.map(t => threadCard(t, true)).join('') || '<p class="text-sm text-slate-400 bg-white rounded-2xl ring-1 ring-slate-200 p-6 text-center">No hay conversaciones.</p>'}</div>`;
+}
+function newThreadSheet() {
+  const users = db.users.filter(u => u.active && !u.pending && u.id !== ui.sessionId).sort((a, b) => a.name.localeCompare(b.name));
+  return `<form onsubmit="event.preventDefault();App.startThread(this)">${sheetHead('Nueva conversación')}
+    <div class="p-5 space-y-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <div><label class="text-xs font-semibold text-slate-600">Para</label>
+        <input list="thread-users" name="who" required class="${input} mt-1" placeholder="Escribe el nombre, usuario o email" autocomplete="off">
+        <datalist id="thread-users">${users.map(u => `<option value="${esc(u.name)} · @${esc(u.username)}"></option>`).join('')}</datalist></div>
+      <div><label class="text-xs font-semibold text-slate-600">Asunto</label><input name="subject" required maxlength="120" class="${input} mt-1"></div>
+      <div><label class="text-xs font-semibold text-slate-600">Mensaje</label><textarea name="body" required rows="4" maxlength="2000" class="${input} mt-1"></textarea></div>
+      <p class="text-xs text-slate-400">Le llegará por notificación en la app y por email desde ${CONTACT_EMAIL}. Podrá responderte en su pestaña Contacto.</p>
+      <button class="${btnP} w-full !py-2.5">Enviar mensaje</button>
+    </div></form>`;
 }
 
 function inviteSheet() {
@@ -1003,7 +1017,7 @@ function renderModels() {
             <p class="text-xs text-slate-500 mt-1 line-clamp-2">${esc(m.description)}</p>
             <div class="flex flex-wrap gap-1 mt-2">${SIZES.map(s => `<span class="text-[11px] font-semibold rounded px-1.5 py-0.5 ${m.sizes.includes(s) ? 'bg-slate-100 text-slate-700' : 'text-slate-300 line-through'}">${s}</span>`).join('')}</div>
             <div class="text-xs text-slate-500 mt-2">${n.length} pedidos · ${n.reduce((a, o) => a + units(o.items), 0)} uds.</div>
-            <div class="flex gap-2 mt-3"><button class="${btnS} flex-1" onclick="App.editModel('${m.id}')">${ic.edit} Editar</button><button class="${btnS}" onclick="App.announceModel('${m.id}')" title="Avisar a todos los usuarios (notificación y email desde tu correo)" aria-label="Avisar a los usuarios">📣</button><button class="${btnD}" onclick="App.deleteModel('${m.id}')" title="Eliminar modelo obsoleto">${ic.trash}</button></div>
+            <div class="flex gap-2 mt-3"><button class="${btnS} flex-1" onclick="App.editModel('${m.id}')">${ic.edit} Editar</button><button class="${btnS}" onclick="App.announceModel('${m.id}')" title="Volver a avisar a todos los usuarios (notificación y email)" aria-label="Avisar a los usuarios">📣</button><button class="${btnD}" onclick="App.deleteModel('${m.id}')" title="Eliminar modelo obsoleto">${ic.trash}</button></div>
             <button class="${offerActive(m) ? btnP : btnS} w-full mt-2" onclick="App.editOffer('${m.id}')">🏷 Oferta${offerActive(m) ? ` · ${offerShort(m.offer)} activa` : ''}</button>
           </div></article>`;
       }).join('') || empty(all.length ? 'No hay modelos de este tipo' : 'No hay modelos publicados', 'Pulsa «Nuevo modelo» para añadir uno.')}
@@ -1063,7 +1077,7 @@ function modelForm() {
       </div>
     </div>
     <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 sticky bottom-0 bg-white">
-      ${d.id ? '' : `<label class="mr-auto flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" class="accent-brand-600 w-4 h-4" ${d.notify !== false ? 'checked' : ''} onchange="App.draftSet('notify',this.checked)"> Avisar a todos los usuarios (notificación y email desde tu correo)</label>`}
+      ${d.id ? '' : `<p class="mr-auto text-xs text-slate-500">Al publicarlo, todos los usuarios recibirán un aviso y un email.</p>`}
       <button class="${btnS}" onclick="App.closeModal()">Cancelar</button>
       <button class="${btnP}" onclick="App.saveModel()">${d.id ? 'Guardar cambios' : 'Publicar modelo'}</button>
     </div>`;
@@ -1487,6 +1501,20 @@ const App = {
     render();
   },
   msgFilter(k) { ui.msgFilter = k; render(); },
+  openNewThread() { openModal(newThreadSheet()); },
+  async startThread(form) {
+    const who = form.who.value.trim().toLowerCase(), handle = (who.match(/@([\w.\-]+)/) || [])[1];
+    const target = db.users.find(u => u.active && !u.pending && (handle ? u.username.toLowerCase() === handle
+      : [u.name, u.username, u.email].some(x => (x || '').toLowerCase() === who)));
+    if (!target) return toast('Elige un usuario de la lista', 'error');
+    const a = me(), now = new Date().toISOString();
+    const t = { id: uid('c'), userId: target.id, userName: target.name, subject: form.subject.value.trim(), status: 'respondida', at: now, updatedAt: now,
+      readUser: false, readAdmin: true, startedBy: 'admin', messages: [{ from: 'admin', by: a.id, name: a.name, body: form.body.value.trim(), at: now }] };
+    db.contact.push(t); notifyContact(t, true); save(); closeModal(); ui.openThread = t.id; render();
+    await syncChain;
+    const r = await callMail({ type: 'reply', threadId: t.id });
+    toast(mailNote(r, `Mensaje enviado a ${target.name}`), r.ok || r.notConfigured ? 'ok' : 'error');
+  },
   async sendQuestion(form) {
     const u = me(), now = new Date().toISOString(), b = form.querySelector('button');
     const t = { id: uid('c'), userId: u.id, userName: u.name, subject: form.subject.value.trim(), status: 'abierta', at: now, updatedAt: now,
@@ -1546,9 +1574,12 @@ const App = {
         endsAt = new Date(Date.now() + dur * (d.unit === 'h' ? 36e5 : 864e5)).toISOString();
       }
     }
+    const wasActive = offerActive(m), before = JSON.stringify(prev);
     m.offer = { active: !!d.active, type: d.type, percent: d.type === 'units' ? null : percent, buy: d.type === 'units' ? buy : null, pay: d.type === 'units' ? pay : null, endsAt };
     save(); closeModal(); render();
     toast(d.active ? `Oferta activada: ${offerShort(m.offer)}${endsAt ? ' · ' + countdown(endsAt).toLowerCase() : ''}` : 'Oferta desactivada', 'ok');
+    // A todos los usuarios activos les llega la oferta (notificación + email) al activarla o al cambiar sus condiciones.
+    if (offerActive(m) && (!wasActive || before !== JSON.stringify(m.offer))) App.announceModel(m.id, true, 'offer');
   },
   async testMail(b) {
     b.disabled = true; b.textContent = 'Enviando…';
@@ -1663,7 +1694,7 @@ const App = {
     if (form.message.dataset.edited) return;
     form.message.value = confirmText(db.orders.find(o => o.id === oid), form.withEta.checked ? form.eta.value.trim() : '');
   },
-  sendConfirmation(oid, form) {
+  async sendConfirmation(oid, form) {
     const o = db.orders.find(x => x.id === oid), u = userById(o.userId);
     const eta = form.withEta.checked ? form.eta.value.trim() : '';
     if (form.withEta.checked && !eta) return toast('Indica el tiempo estimado o desmarca la opción', 'error');
@@ -1671,9 +1702,12 @@ const App = {
     o.confirmation = { at: new Date().toISOString(), byUserId: ui.sessionId, eta: eta || null, message, viaNotif, viaEmail };
     const title = `Pedido confirmado: ${o.modelName}`;
     if (u && viaNotif) sendNotif(u, title, eta ? `Entrega estimada: ${eta}` : 'El administrador ha confirmado tu pedido.', o.id);
-    if (u && viaEmail) sendMail(u, `[${APP_NAME}] ${title}`, message, o.id);
+    if (u && viaEmail) sendMail(u, `[${APP_NAME}] ${title}`, message + (eta ? `\nTiempo estimado de entrega: ${eta}` : ''), o.id);
     save(); closeModal(); render();
-    toast(viaNotif || viaEmail ? `Confirmación enviada a ${u?.name}` : 'Pedido marcado como confirmado (sin avisar)');
+    if (!viaEmail) return toast(viaNotif ? `Confirmación enviada a ${u?.name}` : 'Pedido marcado como confirmado (sin avisar)');
+    await syncChain;
+    const r = await callMail({ type: 'confirm', orderId: oid });
+    toast(mailNote(r, `Confirmación enviada a ${u?.name} por ${viaNotif ? 'notificación y ' : ''}email`), r.ok || r.notConfigured ? 'ok' : 'error');
   },
   mailtoConfirmation(oid, form) {
     const o = db.orders.find(x => x.id === oid), u = userById(o.userId);
@@ -1708,7 +1742,10 @@ Ahora: ${itemsText(items)} · ${money(orderTotal(o))} · pendiente de pago.`); }
     else { db.orders.push({ id: uid('o'), userId: ui.sessionId, modelId: mid, modelName: m.name, unitPrice: m.price, offer: offerSnapshot(m), items, status: 'pendiente', createdAt: now, updatedAt: now, payment: null }); toast('¡Solicitud enviada al administrador!');
       const no = db.orders.at(-1);
       alertAdmins('pedido', no, `Nuevo pedido: ${m.name}`, `${me().name} ha solicitado ${m.name} (${catName(catOf(m))}).
-Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`); }
+Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
+      save(); render();
+      syncChain.then(() => callMail({ type: 'order', orderId: no.id })); // email «Hemos recibido tu pedido»
+      return; }
     save(); render();
   },
   cancelOrder(oid) {
@@ -1903,37 +1940,24 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     } else db.models.push({ id: d.newId = uid('m'), color: d.color, ink: d.ink, createdAt: new Date().toISOString(), ...data });
     if (!save()) { db.models = JSON.parse(backup); return; }
     closeModal(); ui.sel = {}; render(); toast(d.id ? 'Modelo actualizado' : 'Modelo publicado en el catálogo');
-    if (!d.id && d.notify !== false) App.announceModel(d.newId, true);
+    if (!d.id) App.announceModel(d.newId, true); // todo modelo nuevo se anuncia a los usuarios activos
   },
-  // Aviso de modelo nuevo: notificación en la app (y copia en el buzón) para cada usuario, y un email que el
-  // administrador envía desde su propio correo con todos los usuarios en copia oculta (CCO).
-  announceModel(id, auto) {
-    const m = modelById(id);
-    if (!auto && !confirm(`¿Avisar a todos los usuarios de «${m.name}»?`)) return;
-    const now = new Date().toISOString(), users = db.users.filter(u => u.active && u.id !== ui.sessionId);
-    const appUrl = location.origin + location.pathname;
-    const text = `Ya puedes pedir «${m.name}» (${catName(catOf(m))}, ${money(m.price)}) en el catálogo.`;
-    const body = `${text}\n\n${m.description}\n\nEntra en la app para elegir tu talla: ${appUrl}`;
+  // Aviso de modelo nuevo u oferta: notificación en la app (y copia en el buzón) para cada usuario activo, y email
+  // automático desde laprimamery@gmail.com a todos ellos (Edge Function send-mail, en copia oculta).
+  async announceModel(id, auto, kind = 'new-model') {
+    const m = modelById(id), isOffer = kind === 'offer';
+    if (!auto && !confirm(`¿Avisar a todos los usuarios de «${m.name}» por notificación y email?`)) return;
+    const now = new Date().toISOString(), users = db.users.filter(u => u.active && !u.pending && u.role !== 'admin');
+    const text = isOffer ? `${offerLong(m.offer)} en «${m.name}». ¡Aprovéchala!` : `Ya puedes pedir «${m.name}» (${catName(catOf(m))}, ${money(m.price)}) en el catálogo.`;
+    const title = isOffer ? `Oferta: ${m.name}` : `Nuevo modelo: ${m.name}`;
     users.forEach(u => {
-      db.notifications.push({ id: uid('n'), to: u.id, title: `Nuevo modelo: ${m.name}`, body: text, orderId: null, at: now, read: false });
-      sendMail(u, `[${APP_NAME}] Nuevo modelo: ${m.name}`, body, null);
+      db.notifications.push({ id: uid('n'), to: u.id, title, body: text, orderId: null, at: now, read: false });
+      sendMail(u, `[${APP_NAME}] ${title}`, `${text}\n\n${m.description}`, null);
     });
-    save();
-    ui.announce = {
-      subject: `Nuevo modelo en ${APP_NAME}: ${m.name}`,
-      body: `Hola:\n\n${body}\n\n— ${APP_NAME}`,
-      batches: bccBatches(users.map(u => u.email).filter(e => e && !isTestEmail(e))),
-      skipped: users.filter(u => isTestEmail(u.email)).length,
-      sent: [],
-    };
-    openModal(announceSheet(m, users.length));
-  },
-  openAnnounceMail(i) {
-    const a = ui.announce;
-    location.href = `mailto:${encodeURIComponent(me().email)}?bcc=${encodeURIComponent(a.batches[i].join(','))}`
-      + `&subject=${encodeURIComponent(a.subject)}&body=${encodeURIComponent(a.body)}`;
-    if (!a.sent.includes(i)) a.sent.push(i);
-    setTimeout(() => openModal(announceSheet(null, null)), 400);
+    save(); await syncChain; // el modelo (y su oferta) tiene que estar guardado antes de enviar los emails
+    const r = await callMail({ type: 'broadcast', kind, modelId: id });
+    toast(r.ok ? `Aviso enviado a ${users.length} usuarios por notificación y a ${r.data.sent} por email`
+      : mailNote(r, ''), r.ok || r.notConfigured ? 'ok' : 'error');
   },
   deleteModel(id) {
     const m = modelById(id), n = db.orders.filter(o => o.modelId === id).length;

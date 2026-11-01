@@ -1132,6 +1132,38 @@ function userForm(u) {
 }
 
 // ---------- ADMIN: ajustes ----------
+// Bloque de PayPal en Ajustes. El Secret se guarda en una tabla protegida (app_secrets) que la app no puede leer:
+// aquí solo se ve si está guardado y sus últimos 4 caracteres.
+function paypalSettings() {
+  const s = db.settings, sec = ui.paypalSecret, live = s.paypalEnv !== 'sandbox';
+  if (sec === undefined) { ui.paypalSecret = null; App.loadPaypalStatus(); }
+  const ready = !!(s.paypalClientId && sec?.hint);
+  const step = (n, html) => `<li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">${n}</span><span>${html}</span></li>`;
+  const link = (href, text) => `<a href="${href}" target="_blank" rel="noopener" class="font-semibold text-brand-700 underline">${text}</a>`;
+  return `<form class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3 lg:row-span-2" onsubmit="event.preventDefault();App.savePaypal(this)">
+    <div class="flex items-center gap-2"><h2 class="font-semibold flex-1">Pagos con ${paypalLogo}</h2>
+      ${ready ? `<span class="rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-100 px-2.5 py-0.5 text-xs font-semibold">✓ Activo · ${live ? 'cobros reales' : 'modo pruebas'}</span>`
+              : '<span class="rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2.5 py-0.5 text-xs font-semibold">Sin configurar</span>'}</div>
+    <div class="grid grid-cols-2 gap-2">
+      <label class="flex items-center gap-2 rounded-xl ring-1 ${live ? 'ring-brand-600 bg-brand-50' : 'ring-slate-200'} px-3 py-2 text-sm cursor-pointer"><input type="radio" name="paypalEnv" value="live" class="accent-brand-600" ${live ? 'checked' : ''}> <span><b>Real</b><span class="block text-xs text-slate-500">Cobros de verdad</span></span></label>
+      <label class="flex items-center gap-2 rounded-xl ring-1 ${!live ? 'ring-brand-600 bg-brand-50' : 'ring-slate-200'} px-3 py-2 text-sm cursor-pointer"><input type="radio" name="paypalEnv" value="sandbox" class="accent-brand-600" ${!live ? 'checked' : ''}> <span><b>Pruebas</b><span class="block text-xs text-slate-500">Sandbox, sin dinero real</span></span></label>
+    </div>
+    <div><label class="text-xs font-semibold text-slate-600">Client ID</label><input name="paypalClientId" autocomplete="off" spellcheck="false" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId || '')}" placeholder="Empieza por A…"></div>
+    <div><label class="text-xs font-semibold text-slate-600">Secret</label><input name="paypalSecret" type="password" autocomplete="new-password" spellcheck="false" class="${input} mt-1 font-mono text-xs" placeholder="${sec?.hint ? `Guardado (termina en ${esc(sec.hint.slice(1))}). Déjalo vacío para no cambiarlo` : 'Pega aquí el Secret'}">
+      <p class="text-xs text-slate-400 mt-1">El Secret se guarda protegido: nadie puede verlo desde la app, solo lo usa el servidor al cobrar.</p></div>
+    <div class="flex flex-wrap gap-2"><button class="${btnP}">Guardar datos de PayPal</button><button type="button" class="${btnS}" onclick="App.testPaypal(this)">Probar conexión</button></div>
+    <details class="rounded-xl bg-cream-100/60 p-3" ${ready ? '' : 'open'}>
+      <summary class="cursor-pointer text-sm font-semibold text-brand-700">Cómo conseguir el Client ID y el Secret</summary>
+      <ol class="mt-3 space-y-2.5 text-sm text-slate-700">
+        ${step(1, `Necesitas una cuenta <b>PayPal Business</b> (de empresa), que es donde llegará el dinero. Créala o convierte tu cuenta en ${link('https://www.paypal.com/es/business', 'paypal.com/es/business')}.`)}
+        ${step(2, `Entra con esa cuenta en ${link('https://developer.paypal.com/dashboard/applications/live', 'developer.paypal.com → Apps &amp; Credentials')}.`)}
+        ${step(3, `Arriba, asegúrate de que está seleccionado <b>Live</b> (para pruebas, <b>Sandbox</b>). Pulsa <b>Create App</b>, ponle de nombre «La Prima Mery» y créala.`)}
+        ${step(4, `Copia el <b>Client ID</b> y el <b>Secret</b> (pulsa «Show» para verlo) y pégalos aquí arriba. Elige <b>Real</b> si son de Live o <b>Pruebas</b> si son de Sandbox.`)}
+        ${step(5, `Pulsa <b>Guardar datos de PayPal</b> y después <b>Probar conexión</b>. Si sale «Conexión correcta», los usuarios ya pueden pagar con PayPal o con tarjeta.`)}
+      </ol>
+    </details>
+  </form>`;
+}
 function renderSettings() {
   const s = db.settings;
   return `
@@ -1148,10 +1180,9 @@ function renderSettings() {
           <p class="text-sm text-slate-600">Por email: siempre disponible.</p>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="smsEnabled" class="accent-brand-600 w-4 h-4" ${s.smsEnabled ? 'checked' : ''}> También por SMS a los usuarios con teléfono</label>
           <p class="text-xs text-slate-400">El SMS necesita un proveedor (Twilio, Vonage…) configurado en Supabase → Authentication → Sign In / Providers → Phone. Actívalo aquí solo cuando esté listo.</p></fieldset>
-        <div><label class="text-xs font-semibold text-slate-600">PayPal Client ID (Live)</label><input name="paypalClientId" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId)}" placeholder="Vacío = pago online desactivado">
-          <p class="text-xs text-slate-500 mt-1">Client ID de la app <b>Live</b> de la cuenta PayPal Business (developer.paypal.com → Apps &amp; Credentials → Live). El <b>Secret</b> no va aquí: se guarda en Supabase como <code>PAYPAL_SECRET</code>. Sin Client ID, los usuarios verán que el pago online aún no está activado.</p></div>
         <button class="${btnP}">Guardar ajustes</button>
       </form>
+      ${paypalSettings()}
       <div class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3">
         <h2 class="font-semibold">Datos en la nube</h2>
         <p class="text-sm text-slate-500">Pedidos, usuarios, modelos y fotos se guardan en Supabase y se sincronizan al momento entre todos los dispositivos. Los cambios de otros usuarios aparecen sin recargar.</p>
@@ -1945,8 +1976,38 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     db.settings.maxUnits = Math.max(1, parseInt(f.maxUnits) || 5);
     db.settings.alertNotif = !!f.alertNotif; db.settings.alertEmail = !!f.alertEmail; db.settings.smsEnabled = !!f.smsEnabled;
     db.settings.currency = f.currency;
-    db.settings.paypalClientId = f.paypalClientId.trim();
     save(); render(); toast('Ajustes guardados');
+  },
+  // --- PayPal ---
+  async loadPaypalStatus() {
+    const { data } = await sb.rpc('admin_secret_status');
+    ui.paypalSecret = (data || []).find(x => x.key === 'paypal_secret') || { hint: null };
+    if (ui.tab === 'ajustes') render();
+  },
+  async savePaypal(form) {
+    const f = Object.fromEntries(new FormData(form)), b = form.querySelector('button:not([type=button])');
+    const clientId = (f.paypalClientId || '').replace(/\s+/g, ''), secret = (f.paypalSecret || '').replace(/\s+/g, '');
+    if (!clientId) return toast('Pega el Client ID de PayPal', 'error');
+    if (!secret && !ui.paypalSecret?.hint) return toast('Pega el Secret de PayPal', 'error');
+    b.disabled = true; b.textContent = 'Guardando…';
+    db.settings.paypalClientId = clientId; db.settings.paypalEnv = f.paypalEnv === 'sandbox' ? 'sandbox' : 'live';
+    save(); await syncChain;
+    if (secret) {
+      const { error } = await sb.rpc('admin_set_secret', { p_key: 'paypal_secret', p_value: secret });
+      if (error) { b.disabled = false; b.textContent = 'Guardar datos de PayPal'; return toast(error.message, 'error'); }
+    }
+    paypalLoadedFor = null; // el SDK se recarga con el Client ID nuevo
+    await App.loadPaypalStatus();
+    toast('Datos de PayPal guardados. Pulsa «Probar conexión» para comprobarlos.');
+  },
+  async testPaypal(b) {
+    b.disabled = true; b.textContent = 'Comprobando…';
+    const { data, error } = await sb.functions.invoke('paypal', { body: { action: 'check' } });
+    let detail = null;
+    if (error) { try { detail = await error.context?.json(); } catch {} }
+    b.disabled = false; b.textContent = 'Probar conexión';
+    if (!error && data?.ok) return toast(`Conexión correcta con PayPal (${data.mode === 'real' ? 'cobros reales' : 'modo pruebas'}). Ya se puede pagar.`);
+    toast(detail?.error || error?.message || 'No se pudo comprobar', 'error');
   },
 };
 window.App = App;

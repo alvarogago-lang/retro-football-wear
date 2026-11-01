@@ -64,4 +64,4 @@ En Modelos, el botón **Oferta** (debajo de Editar) activa o desactiva una ofert
 ## Pagos con PayPal (reales)
 
 - El usuario paga con su cuenta PayPal o con tarjeta. El **servidor** (Edge Function `supabase/functions/paypal`) crea el cobro con el importe calculado a partir del pedido (ofertas incluidas) y lo confirma con PayPal; solo entonces el pedido pasa a **Pagado**, se registra el pago (cuenta PayPal, transacción) y se avisa a los administradores.
-- Configuración: **Client ID Live** en Ajustes de la app y **Secret Live** en Supabase → Edge Functions → Secrets como `PAYPAL_SECRET`. Ambos salen de developer.paypal.com → Apps & Credentials → Live (requiere cuenta PayPal Business).
+- Configuración desde la app, **Ajustes → Pagos con PayPal**: modo Real o Pruebas, **Client ID** y **Secret** (de developer.paypal.com → Apps & Credentials, con una cuenta PayPal Business). El Secret se guarda en la tabla protegida `app_secrets` (migración `supabase/006_secretos.sql`), que solo lee la Edge Function. El botón «Probar conexión» comprueba las credenciales.

@@ -5,11 +5,12 @@
 // Acciones (body.action):
 //   create  { orderId }                 → crea la orden de PayPal y devuelve su id
 //   capture { orderId, paypalOrderId }  → cobra, registra el pago, avisa a los administradores
+//   check   {}                          → (solo administradores) comprueba que PayPal acepta las credenciales
 //
-// Configuración:
-//   · Client ID (público): en la app, Ajustes → «PayPal Client ID» (tabla settings).
-//   · Secreto PAYPAL_SECRET (Supabase → Edge Functions → Secrets): «Secret» de la app de PayPal.
-//   · PAYPAL_ENV opcional: 'sandbox' para pruebas; por defecto, cobros reales ('live').
+// Configuración (la hace un administrador en la app, Ajustes → PayPal):
+//   · Client ID (público) y modo Real/Pruebas → tabla settings (paypalClientId, paypalEnv).
+//   · Secret → tabla protegida app_secrets (key 'paypal_secret'), que solo puede leer esta función.
+//     Como alternativa se acepta el secreto PAYPAL_SECRET de Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4';
 
 const cors = {
@@ -38,21 +39,24 @@ Deno.serve(async (req) => {
     const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
     const { data: { user } } = await db.auth.getUser(token);
     if (!user) return json({ error: 'Sin sesión' }, 401);
-    const { data: me } = await db.from('profiles').select('id, name, email, active, pending').eq('id', user.id).single();
+    const { data: me } = await db.from('profiles').select('id, name, email, role, active, pending').eq('id', user.id).single();
     if (!me?.active || me.pending) return json({ error: 'Tu cuenta no está activa' }, 403);
 
     const { data: st } = await db.from('settings').select('data').eq('id', 1).single();
-    const clientId = String(st?.data?.paypalClientId || '').trim(), secret = env('PAYPAL_SECRET').trim();
+    const { data: sec } = await db.from('app_secrets').select('value').eq('key', 'paypal_secret').maybeSingle();
+    const clientId = String(st?.data?.paypalClientId || '').trim();
+    const secret = String(sec?.value || env('PAYPAL_SECRET')).trim();
     const currency = st?.data?.currency || 'EUR';
-    if (!clientId || !secret) return json({ error: 'El pago con PayPal aún no está configurado.', notConfigured: true }, 503);
-    const base = env('PAYPAL_ENV') === 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+    const sandbox = (st?.data?.paypalEnv || env('PAYPAL_ENV')) === 'sandbox';
+    if (!clientId || !secret) return json({ error: 'El pago con PayPal aún no está configurado (falta el Client ID o el Secret en Ajustes).', notConfigured: true }, 503);
+    const base = sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
 
     const auth = await fetch(`${base}/v1/oauth2/token`, {
       method: 'POST',
       headers: { Authorization: 'Basic ' + btoa(`${clientId}:${secret}`), 'Content-Type': 'application/x-www-form-urlencoded' },
       body: 'grant_type=client_credentials',
     });
-    if (!auth.ok) return json({ error: 'PayPal ha rechazado las credenciales (Client ID o Secret). Revisa que sean las de «Live».' }, 502);
+    if (!auth.ok) return json({ error: `PayPal ha rechazado el Client ID o el Secret. Comprueba que los dos son de la pestaña «${sandbox ? 'Sandbox' : 'Live'}» de la misma app.` }, 502);
     const { access_token } = await auth.json();
     const pp = (path: string, body?: unknown) => fetch(`${base}${path}`, {
       method: 'POST',
@@ -61,6 +65,10 @@ Deno.serve(async (req) => {
     });
 
     const body = await req.json();
+    if (body.action === 'check') {
+      if (me.role !== 'admin') return json({ error: 'Solo administradores' }, 403);
+      return json({ ok: true, mode: sandbox ? 'pruebas' : 'real' });
+    }
     const { data: row } = await db.from('orders').select('data').eq('id', body.orderId).single();
     if (!row) return json({ error: 'Pedido no encontrado' }, 404);
     const o = row.data;
@@ -97,7 +105,7 @@ Deno.serve(async (req) => {
       }
       const now = new Date().toISOString();
       const payment = {
-        txId: cap.id, method: env('PAYPAL_ENV') === 'sandbox' ? 'PayPal (pruebas)' : 'PayPal',
+        txId: cap.id, method: sandbox ? 'PayPal (pruebas)' : 'PayPal',
         payerEmail: d.payer?.email_address || '', payerId: d.payer?.payer_id || null,
         payerName: [d.payer?.name?.given_name, d.payer?.name?.surname].filter(Boolean).join(' ') || me.name,
         paidByUserId: me.id, amount, paidAt: now,

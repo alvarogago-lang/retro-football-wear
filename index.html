@@ -603,6 +603,50 @@ function catChips(current, setter, models, showEmpty = false) {
   const chip = (id, label, n) => `<button onclick="App.${setter}('${id}')" class="whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-semibold ring-1 transition ${current === id ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:ring-slate-300'}">${esc(label)} <span class="${current === id ? 'text-white/60' : 'text-slate-400'}">${n}</span></button>`;
   return `<div class="flex gap-2 overflow-x-auto scroll-thin pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">${chip('', 'Todos', models.length)}${cats.map(([id, l]) => chip(id, l, count(id))).join('')}</div>`;
 }
+// Visor de fotos a pantalla completa: se desliza con el dedo (o flechas/teclado en PC) entre las fotos del modelo.
+function openViewer(mid) {
+  const m = modelById(mid), imgs = m.images.length ? m.images : [fallbackFor(m)];
+  const start = (ui.sel[mid]?.img || 0) % imgs.length, many = imgs.length > 1;
+  const arrow = (d, path, side) => `<button onclick="App.viewerStep(${d})" class="hidden sm:grid absolute ${side} top-1/2 -translate-y-1/2 place-items-center w-11 h-11 rounded-full bg-white/15 hover:bg-white/30 text-white" aria-label="${d < 0 ? 'Foto anterior' : 'Foto siguiente'}"><svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="${path}"/></svg></button>`;
+  const el = document.createElement('div');
+  el.id = 'viewer';
+  el.className = 'fixed inset-0 z-[60] bg-black/95 flex flex-col fade-in';
+  el.innerHTML = `
+    <div class="flex items-center gap-3 px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 text-white">
+      <span class="flex-1 font-semibold truncate">${esc(m.name)}</span>
+      ${many ? '<span id="viewer-n" class="text-sm text-white/70"></span>' : ''}
+      <button onclick="App.closeViewer()" class="grid place-items-center w-10 h-10 rounded-full hover:bg-white/10" aria-label="Cerrar">${ic.x}</button>
+    </div>
+    <div class="relative flex-1 min-h-0">
+      <div id="viewer-track" class="h-full flex overflow-x-auto snap-x snap-mandatory" style="scrollbar-width:none">
+        ${imgs.map(src => `<div class="w-full h-full shrink-0 snap-center grid place-items-center p-2 sm:p-6" onclick="if(event.target===this)App.closeViewer()">${imgTag(src, m, 'max-w-full max-h-full object-contain select-none')}</div>`).join('')}
+      </div>
+      ${many ? arrow(-1, 'm15 18-6-6 6-6', 'left-3') + arrow(1, 'm9 18 6-6-6-6', 'right-3') : ''}
+    </div>
+    ${many ? `<div id="viewer-dots" class="flex justify-center gap-2 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">${imgs.map(() => '<span class="w-2 h-2 rounded-full bg-white/40"></span>').join('')}</div>` : '<div class="pb-[env(safe-area-inset-bottom)]"></div>'}`;
+  el.querySelectorAll('img').forEach(i => { i.loading = 'eager'; });
+  document.body.appendChild(el);
+  document.body.style.overflow = 'hidden';
+  const track = el.querySelector('#viewer-track');
+  const sync = () => {
+    const i = Math.round(track.scrollLeft / track.clientWidth);
+    if (ui.sel[mid]) ui.sel[mid].img = i;
+    if (!many) return;
+    el.querySelector('#viewer-n').textContent = `${i + 1} / ${imgs.length}`;
+    el.querySelectorAll('#viewer-dots span').forEach((d, k) => d.className = `w-2 h-2 rounded-full ${k === i ? 'bg-white' : 'bg-white/40'}`);
+  };
+  track.scrollLeft = start * track.clientWidth;
+  track.addEventListener('scroll', sync, { passive: true });
+  sync();
+  ui.viewerKeys = (e) => { if (e.key === 'Escape') App.closeViewer(); else if (e.key === 'ArrowLeft') App.viewerStep(-1); else if (e.key === 'ArrowRight') App.viewerStep(1); };
+  document.addEventListener('keydown', ui.viewerKeys);
+}
+function closeViewer() {
+  document.getElementById('viewer')?.remove();
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', ui.viewerKeys);
+  render(); // la tarjeta se queda en la última foto vista
+}
 const catTag = (m) => `<span class="inline-block rounded-md bg-cream-100 text-gold-700 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide">${esc(catName(catOf(m)))}</span>`;
 
 function renderCatalog() {
@@ -639,6 +683,8 @@ function renderCard(m) {
   <article class="bg-white rounded-3xl ring-1 ring-slate-200 shadow-sm overflow-hidden flex flex-col">
     <div class="relative aspect-tee bg-slate-100">
       ${imgTag(imgs[s.img % imgs.length], m, 'w-full h-full object-cover')}
+      <button class="absolute inset-0 cursor-zoom-in" onclick="App.openViewer('${m.id}')" aria-label="Ampliar ${imgs.length > 1 ? 'las fotos' : 'la foto'}"></button>
+      <span class="pointer-events-none absolute bottom-3 right-3 grid place-items-center w-8 h-8 rounded-full bg-black/40 text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></span>
       <div class="absolute top-3 left-3 flex flex-col items-start gap-2">${offerBadge(m)}${o ? badge(o.status) : ''}</div>
       <div class="absolute top-3 right-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold shadow">${offerActive(m) && m.offer.type !== 'units' ? `<s class="text-slate-400 font-normal mr-1">${money(m.price)}</s><span class="text-brand-700">${money(offerPrice(m.offer, m.price, 1))}</span>` : money(m.price)}</div>
       ${imgs.length > 1 ? `<div class="absolute bottom-3 inset-x-0 flex justify-center gap-1.5">${imgs.map((_, i) => `<button onclick="App.pickImg('${m.id}',${i})" class="w-2.5 h-2.5 rounded-full ${i === s.img % imgs.length ? 'bg-white' : 'bg-white/50'} ring-1 ring-black/10" aria-label="Foto ${i + 1}"></button>`).join('')}</div>` : ''}
@@ -1763,6 +1809,9 @@ const App = {
 
   // --- usuario ---
   pickImg(mid, i) { ui.sel[mid].img = i; render(); },
+  openViewer(mid) { openViewer(mid); },
+  closeViewer() { closeViewer(); },
+  viewerStep(d) { const t = document.getElementById('viewer-track'); t?.scrollBy({ left: d * t.clientWidth, behavior: 'smooth' }); },
   step(mid, size, delta) {
     const m = modelById(mid), s = selFor(m);
     const next = Math.max(0, (s.items[size] || 0) + delta);

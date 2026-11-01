@@ -220,6 +220,7 @@ const navSvg = (k, cls = 'w-6 h-6') => `<svg class="${cls}" fill="none" stroke="
 
 // ---------- marca ----------
 const APP_NAME = 'La Prima Mery';
+const CONTACT_EMAIL = 'laprimamery@gmail.com';
 const logoIcon = (cls) => `<img src="logo/escudo-simple.svg" alt="" aria-hidden="true" class="${cls}">`;
 const logoFull = (cls) => `<img src="logo/escudo.svg" alt="${APP_NAME} — Equipación histórica" class="${cls}">`;
 const brandMark = `<div class="flex items-center gap-2.5">${logoIcon('w-9 h-auto drop-shadow-sm')}<span class="leading-none whitespace-nowrap"><span class="block font-serif font-bold text-[16px] sm:text-[18px] text-brand-600">La Prima Mery</span><span class="block text-[8px] sm:text-[9px] font-bold tracking-[0.2em] text-gold-700 mt-1">EQUIPACIÓN HISTÓRICA</span></span></div>`;
@@ -258,7 +259,14 @@ function render() {
       <div class="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
         ${brandMark}
         <span class="hidden sm:inline">${roleTag}</span>
-        <div class="ml-auto hidden sm:flex items-center gap-2">
+        <a href="mailto:${CONTACT_EMAIL}" class="hidden lg:flex items-center gap-2 mx-auto rounded-full px-3.5 py-1.5 text-sm text-slate-600 hover:bg-cream-100 hover:text-brand-700" title="Escríbenos">
+          <svg class="w-4 h-4 text-gold-700" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>
+          <span><span class="font-semibold text-slate-700">Contacto:</span> ${CONTACT_EMAIL}</span>
+        </a>
+        <div class="ml-auto lg:ml-0 hidden sm:flex items-center gap-2">
+          <button class="grid place-items-center w-10 h-10 rounded-xl hover:bg-slate-100 text-slate-600" onclick="App.refresh()" title="Actualizar la app" aria-label="Actualizar la app">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
           ${canInstall() ? `<button class="${btnS}" onclick="App.showInstall()">${ic.install} Instalar app</button>` : ''}
           ${bellBtn()}
           <button class="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-slate-100" onclick="App.profileSheet()" title="Tu cuenta"><span class="grid place-items-center w-8 h-8 rounded-full ${u.role === 'admin' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700'} text-sm font-bold">${esc(u.name[0])}</span><span class="text-sm font-semibold hidden lg:inline">${esc(u.name)}</span></button>
@@ -290,6 +298,7 @@ function profileSheet() {
       ${canInstall() ? `<button class="${btnP} w-full !py-3 mb-3" onclick="App.showInstall()">${ic.install} Instalar app en este ${isMobile() ? 'móvil' : 'ordenador'}</button>` : ''}
       <button class="${btnS} w-full !py-3 mb-2" onclick="App.openInvite()">✉ Invitar a un amigo</button>
       <button class="${btnS} w-full !py-3 mb-2" onclick="App.changePassword()">Cambiar mi contraseña</button>
+      <a href="mailto:${CONTACT_EMAIL}" class="block text-center text-sm text-slate-600 mb-3">Contacto: <b class="text-brand-700">${CONTACT_EMAIL}</b></a>
       <button class="${btnD} w-full !py-3" onclick="App.closeModal();App.logout()">Cerrar sesión</button>
     </div>`;
 }
@@ -309,6 +318,7 @@ function renderLogin() {
         <button class="w-full text-center text-sm font-semibold text-brand-700 mt-4" onclick="App.forgotPassword()">¿Olvidaste tu contraseña?</button>
         <div class="mt-5 pt-5 border-t border-cream-200 text-center"><p class="text-sm text-slate-500 mb-2">¿Aún no tienes cuenta?</p><button class="${btnS} w-full !py-2.5 !ring-brand-600 !text-brand-700" onclick="App.openSignup()">Crear cuenta</button></div>
         <p class="text-xs text-slate-400 mt-4 text-center">Las cuentas nuevas las valida un administrador.</p>
+        <p class="text-xs text-slate-500 mt-2 text-center">Contacto: <a class="font-semibold text-brand-700" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>
       </div>
       ${canInstall() ? `<button class="${btnS} w-full mt-4" onclick="App.showInstall()">${ic.install} Instalar la app</button>` : ''}
     </div>
@@ -1471,6 +1481,11 @@ const App = {
     t.status = t.status === 'cerrada' ? (t.messages.at(-1).from === 'admin' ? 'respondida' : 'abierta') : 'cerrada';
     t.readAdmin = true; save(); render();
     toast(t.status === 'cerrada' ? 'Consulta marcada como resuelta' : 'Consulta reabierta', 'info');
+  },
+  // Recarga completa: trae la última versión de la app (y los datos). En el móvil equivale a deslizar hacia abajo.
+  async refresh() {
+    try { await (await navigator.serviceWorker?.getRegistration())?.update(); } catch {}
+    location.reload();
   },
   // --- ofertas ---
   editOffer(id) {

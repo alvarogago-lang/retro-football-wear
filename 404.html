@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La Prima Mery · Nueva dirección</title>
+<meta name="robots" content="noindex">
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #faf6ee; color: #334155; font: 16px/1.5 system-ui, sans-serif; text-align: center; padding: 24px; box-sizing: border-box; }
+  h1 { color: #7b1e2e; font-size: 22px; margin: 0 0 8px; }
+  a.btn { display: inline-block; margin-top: 16px; background: #7b1e2e; color: #fff; text-decoration: none; font-weight: 600; padding: 12px 22px; border-radius: 12px; }
+</style>
+<script>
+  // La Prima Mery se ha mudado a https://laprimamery.github.io/.
+  // Se reenvía allí conservando ?registro (invitaciones) y, si había sesión abierta en esta dirección,
+  // se pasa en el fragmento (#mudanza=…), que no llega a ningún servidor; la app nueva lo borra al leerlo.
+  (function () {
+    var NEW = 'https://laprimamery.github.io/', hash = '#mudanza';
+    // enlaces de los emails de Supabase (contraseña, confirmación): su fragmento se pasa tal cual
+    if (/access_token=|error=|type=/.test(location.hash)) return location.replace(NEW + location.search + location.hash);
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (/^sb-.*-auth-token$/.test(k)) {
+          var t = JSON.parse(localStorage.getItem(k));
+          if (t && t.refresh_token) hash += '=' + encodeURIComponent(t.refresh_token);
+          localStorage.removeItem(k); // la sesión pasa a la dirección nueva y aquí deja de existir
+          break;
+        }
+      }
+    } catch (e) {}
+    location.replace(NEW + location.search + hash);
+  })();
+</script>
+</head>
+<body>
+  <div>
+    <h1>La Prima Mery tiene nueva dirección</h1>
+    <p>Ahora estamos en <b>laprimamery.github.io</b>.</p>
+    <a class="btn" href="https://laprimamery.github.io/">Ir a La Prima Mery</a>
+  </div>
+</body>
+</html>

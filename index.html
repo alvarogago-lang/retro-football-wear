@@ -756,6 +756,8 @@ function dataTable(key, cols, rows, emptyText, minWidth = 760) {
     const v = (st.f[c.key] || '').trim().toLowerCase();
     return !v || String(c.text(r) ?? '').toLowerCase().includes(v);
   }));
+  const sc = st.sort && cols.find(c => c.key === st.sort.key && c.sort);
+  if (sc) filtered.sort((a, b) => { const x = sc.sort(a), y = sc.sort(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.sort.dir === 'asc' ? 1 : -1); });
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   if (st.page >= pages) st.page = pages - 1;
   const from = st.page * PAGE_SIZE, slice = filtered.slice(from, from + PAGE_SIZE);
@@ -765,7 +767,9 @@ function dataTable(key, cols, rows, emptyText, minWidth = 760) {
       <div class="overflow-x-auto scroll-thin">
         <table class="w-full text-sm" style="min-width:${minWidth}px">
           <thead class="bg-cream-100/70 text-xs text-slate-600">
-            <tr>${cols.map(c => `<th class="text-left px-3 py-2 font-semibold whitespace-nowrap ${c.cls || ''}">${c.label}</th>`).join('')}</tr>
+            <tr>${cols.map(c => `<th class="text-left px-3 py-2 font-semibold whitespace-nowrap ${c.cls || ''}">${c.sort
+              ? `<button type="button" onclick="App.tsort('${key}','${c.key}')" class="inline-flex items-center gap-1 hover:text-brand-700 ${st.sort?.key === c.key ? 'text-brand-700' : ''}" title="Ordenar de mayor a menor / de menor a mayor">${c.label}<span class="text-[10px]">${st.sort?.key === c.key ? (st.sort.dir === 'asc' ? '▲' : '▼') : '⇅'}</span></button>`
+              : c.label}</th>`).join('')}</tr>
             <tr>${cols.map(c => `<th class="px-2 pb-2 font-normal">${c.noFilter ? '' : `<input id="tf-${key}-${c.key}" value="${esc(st.f[c.key] || '')}" oninput="App.tf('${key}','${c.key}',this.value)" placeholder="Filtrar" class="w-full min-w-[70px] rounded-lg border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500 px-2 py-1 text-xs bg-white">`}</th>`).join('')}</tr>
           </thead>
           <tbody>${slice.map(r => `<tr class="border-t border-slate-100 align-top">${cols.map(c => `<td class="px-3 py-2.5 ${c.cls || ''}">${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('')}</tr>`).join('')
@@ -800,11 +804,11 @@ function renderOrders() {
 
   // 1. Pedidos activos
   const orderCols = [
-    { key: 'fecha', label: 'Fecha', text: o => fmtDate(o.createdAt), cls: 'whitespace-nowrap' },
+    { key: 'fecha', label: 'Fecha', text: o => fmtDate(o.createdAt), sort: o => o.createdAt || '', cls: 'whitespace-nowrap' },
     { key: 'usuario', label: 'Usuario', text: o => userById(o.userId)?.name || 'Usuario borrado', html: o => `<span class="font-semibold">${esc(userById(o.userId)?.name || 'Usuario borrado')}</span>` },
     { key: 'modelo', label: 'Modelo', text: o => modelById(o.modelId)?.name || o.modelName, html: o => { const m = modelById(o.modelId); return esc(m?.name || o.modelName) + (m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''); } },
     { key: 'tallas', label: 'Tallas', text: o => itemsText(o.items), html: o => sizeChips(o.items) },
-    { key: 'importe', label: 'Importe', text: o => money(orderTotal(o)), cls: 'text-right whitespace-nowrap', html: o => `<b>${money(orderTotal(o))}</b>` },
+    { key: 'importe', label: 'Importe', text: o => money(orderTotal(o)), sort: o => orderTotal(o), cls: 'text-right whitespace-nowrap', html: o => `<b>${money(orderTotal(o))}</b>` },
     { key: 'estado', label: 'Estado', text: o => o.status + (o.confirmation ? ' confirmado' : ''), html: o => `<div class="flex flex-col items-start gap-1">${badge(o.status)}${confirmChip(o)}</div>` },
     { key: 'pago', label: 'Pago registrado', text: o => o.payment ? `${userById(o.payment.paidByUserId)?.name || o.payment.payerName} ${paypalAccount(o.payment)} ${o.payment.txId}` : '',
       html: o => { const p = o.payment; return p ? `<div class="text-xs"><div class="font-semibold text-slate-700">${esc(userById(p.paidByUserId)?.name || p.payerName)}</div><div class="text-slate-500">${esc(paypalAccount(p))}</div><div class="text-slate-400">${esc(p.txId)} · ${fmtDate(p.paidAt)}</div></div>` : '<span class="text-slate-400">—</span>'; } },
@@ -832,10 +836,10 @@ function renderOrders() {
   }).sort((a, b) => b.amount6 - a.amount6 || b.m6 - a.m6 || a.u.name.localeCompare(b.u.name));
   const userCols = [
     { key: 'usuario', label: 'Usuario', text: s => `${s.u.name} @${s.u.username}`, html: s => `<div class="font-semibold">${esc(s.u.name)}</div><div class="text-xs text-slate-400">@${esc(s.u.username)}${s.u.active ? '' : ' · de baja'}</div>` },
-    { key: 'mes', label: 'Pedidos último mes', text: s => String(s.m1), cls: 'text-center' },
-    { key: 'seis', label: 'Pedidos últimos 6 meses', text: s => String(s.m6), cls: 'text-center', html: s => s.m6 ? String(s.m6) : `<span class="text-amber-600 font-semibold">0</span>` },
-    { key: 'importe', label: 'Importe 6 meses', text: s => money(s.amount6), cls: 'text-right whitespace-nowrap', html: s => `<b>${money(s.amount6)}</b>` },
-    { key: 'ultimo', label: 'Último pedido', text: s => s.last ? fmtDate(s.last) : 'nunca', cls: 'whitespace-nowrap', html: s => s.last ? fmtDate(s.last) : '<span class="text-slate-400">nunca</span>' },
+    { key: 'mes', label: 'Pedidos último mes', text: s => String(s.m1), sort: s => s.m1, cls: 'text-center' },
+    { key: 'seis', label: 'Pedidos últimos 6 meses', text: s => String(s.m6), sort: s => s.m6, cls: 'text-center', html: s => s.m6 ? String(s.m6) : `<span class="text-amber-600 font-semibold">0</span>` },
+    { key: 'importe', label: 'Importe 6 meses', text: s => money(s.amount6), sort: s => s.amount6, cls: 'text-right whitespace-nowrap', html: s => `<b>${money(s.amount6)}</b>` },
+    { key: 'ultimo', label: 'Último pedido', text: s => s.last ? fmtDate(s.last) : 'nunca', sort: s => s.last || '', cls: 'whitespace-nowrap', html: s => s.last ? fmtDate(s.last) : '<span class="text-slate-400">nunca</span>' },
   ];
 
   // 3. Registro de pagos
@@ -843,13 +847,13 @@ function renderOrders() {
   const pays = [...db.payments].filter(p => inRange(p.paidAt, pf.from, pf.to) && (!f.puser || p.paidByUserId === f.puser || p.userId === f.puser))
     .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
   const payCols = [
-    { key: 'fecha', label: 'Fecha', text: p => fmtDate(p.paidAt), cls: 'whitespace-nowrap' },
+    { key: 'fecha', label: 'Fecha', text: p => fmtDate(p.paidAt), sort: p => p.paidAt || '', cls: 'whitespace-nowrap' },
     { key: 'por', label: 'Pagado por', text: p => userById(p.paidByUserId)?.name || p.payerName, html: p => `<span class="font-semibold">${esc(userById(p.paidByUserId)?.name || p.payerName)}</span>` },
     { key: 'paypal', label: 'Cuenta PayPal', text: p => paypalAccount(p) },
     { key: 'pedido', label: 'Pedido', text: p => { const o = db.orders.find(x => x.id === p.orderId); return o ? `${o.modelName} ${itemsText(o.items)}` : 'pedido eliminado'; },
       html: p => { const o = db.orders.find(x => x.id === p.orderId); return o ? `${esc(o.modelName)} ${sizeChips(o.items)}` : '<span class="text-slate-400">pedido eliminado</span>'; } },
     { key: 'tx', label: 'Transacción', text: p => p.txId + (p.revoked ? ' anulado' : ''), html: p => `<span class="font-mono text-xs">${esc(p.txId)}</span>${p.revoked ? ' <span class="text-xs text-rose-500">(anulado)</span>' : ''}` },
-    { key: 'importe', label: 'Importe', text: p => money(p.amount), cls: 'text-right whitespace-nowrap', html: p => `<b>${money(p.amount)}</b>` },
+    { key: 'importe', label: 'Importe', text: p => money(p.amount), sort: p => p.amount || 0, cls: 'text-right whitespace-nowrap', html: p => `<b>${money(p.amount)}</b>` },
   ];
   const payUsers = db.users.filter(u => db.payments.some(p => p.paidByUserId === u.id || p.userId === u.id));
   const payFilters = `<div class="flex flex-wrap items-center gap-2 mb-3">
@@ -1816,6 +1820,11 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     const el = document.getElementById(`tf-${key}-${col}`); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); }
   },
   tpage(key, d) { tableState(key).page += d; render(); },
+  tsort(key, col) {
+    const st = tableState(key);
+    st.sort = st.sort?.key === col ? { key: col, dir: st.sort.dir === 'desc' ? 'asc' : 'desc' } : { key: col, dir: 'desc' };
+    st.page = 0; render();
+  },
   tclear(key) { tableState(key).f = {}; tableState(key).page = 0; render(); },
   markPaidManual(oid) {
     const o = db.orders.find(x => x.id === oid), u = userById(o.userId), admin = me();

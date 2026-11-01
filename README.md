@@ -1,4 +1,4 @@
-# Retro Football Wear
+# La Prima Mery
 
 App web instalable (PWA) para pedir ropa de fútbol retro: camisetas, pantalones y chaquetas.
 

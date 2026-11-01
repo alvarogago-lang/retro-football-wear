@@ -1,8 +1,9 @@
-// Service worker de Retro Football Wear: permite instalar la app y abrirla sin conexión.
-const CACHE = 'rfw-v4';
+// Service worker de La Prima Mery: permite instalar la app y abrirla sin conexión.
+const CACHE = 'lpm-v1';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
+  'logo/escudo.svg', 'logo/escudo-simple.svg',
   'fotos/camiseta-retro-plana.jpg', 'fotos/camiseta-retro-maniqui.jpg',
   'fotos/chaqueta-celeste-frente.jpg', 'fotos/chaqueta-celeste-completa.jpg', 'fotos/chaqueta-joluvi.jpg',
 ];

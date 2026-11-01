@@ -3,23 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#14213d">
+<meta name="theme-color" content="#7b1e2e">
 <meta name="description" content="Pide tu ropa de fútbol retro: camisetas, pantalones y chaquetas.">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Retro FW">
+<meta name="apple-mobile-web-app-title" content="La Prima Mery">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<title>Retro Football Wear</title>
+<title>La Prima Mery</title>
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script>
-  tailwind.config = { theme: { extend: { colors: { brand: { 50:'#eef1f8',100:'#dbe2f0',500:'#2b3f6b',600:'#14213d',700:'#0b1428' }, gold: { 400:'#f0c53d',500:'#e8b624',700:'#b8860b' }, cream: { 100:'#f3ead8',200:'#e8dcc0' } } } } };
+  tailwind.config = { theme: { extend: { colors: { brand: { 50:'#faf1f2',100:'#f2dfe2',500:'#9b3445',600:'#7b1e2e',700:'#5f1622' }, gold: { 400:'#e0c063',500:'#c9a23a',700:'#8f7020' }, cream: { 100:'#f3eadb',200:'#e6d8bd' }, pitch: { 50:'#edf5f0',100:'#d6e8dd',200:'#b9d6c4',600:'#1e4d35',700:'#163a28' } }, fontFamily: { serif: ['Georgia', '"Times New Roman"', 'serif'] } } } };
 </script>
 <style>
-  body { background:#faf8f3; }
+  body { background:#faf6ee; }
+  main h1 { font-family: Georgia, "Times New Roman", serif; letter-spacing: -0.01em; }
+  .franja { height: 3px; background: linear-gradient(90deg, #7b1e2e 0 46%, #c9a23a 46% 54%, #1e4d35 54% 100%); }
   .fade-in { animation: fade .18s ease-out; }
   @keyframes fade { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform:none; } }
   .scroll-thin::-webkit-scrollbar { height:6px; width:6px; }
@@ -37,7 +39,7 @@
 
 <script>
 /* =========================================================================
-   Retro Football Wear — pedidos de ropa de fútbol retro. App autocontenida.
+   La Prima Mery — pedidos de ropa de fútbol retro. App autocontenida.
    Datos, inicio de sesión y fotos en Supabase; publicada en GitHub Pages.
    ========================================================================= */
 const SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL'];
@@ -141,7 +143,7 @@ async function pushChanges() {
 let rtChannel = null, rtTimer = null;
 function subscribeRealtime() {
   if (rtChannel) sb.removeChannel(rtChannel);
-  rtChannel = sb.channel('rfw-cambios')
+  rtChannel = sb.channel('lpm-cambios')
     .on('postgres_changes', { event: '*', schema: 'public' }, () => { clearTimeout(rtTimer); rtTimer = setTimeout(refreshFromCloud, 400); })
     .subscribe();
 }
@@ -178,7 +180,7 @@ const modelById = (id) => db.models.find(m => m.id === id);
 // ---------- toasts y modales ----------
 function toast(msg, type = 'ok') {
   const el = document.createElement('div');
-  const col = type === 'error' ? 'bg-rose-600' : type === 'info' ? 'bg-slate-800' : 'bg-emerald-600';
+  const col = type === 'error' ? 'bg-rose-600' : type === 'info' ? 'bg-slate-800' : 'bg-pitch-600';
   el.className = `fade-in pointer-events-auto ${col} text-white text-sm px-4 py-2.5 rounded-xl shadow-lg max-w-md`;
   el.textContent = msg;
   document.getElementById('toast-root').appendChild(el);
@@ -215,14 +217,13 @@ const navIc = {
 const navSvg = (k, cls = 'w-6 h-6') => `<svg class="${cls}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" viewBox="0 0 24 24">${navIc[k]}</svg>`;
 
 // ---------- marca ----------
-const APP_NAME = 'Retro Football Wear';
-const LOGO_SHIRT = `<path d="M78 34 L52 42 L22 78 L42 104 L58 94 L58 146 L142 146 L142 94 L158 104 L178 78 L148 42 L122 34 Q100 50 78 34Z" fill="#14213d"/><path d="M82 36 L100 66 L118 36 L110 34 L100 52 L90 34Z" fill="#e8b624"/><path d="M24 80 L40 100 M176 80 L160 100" stroke="#e8b624" stroke-width="5"/>`;
-const logoIcon = (cls) => `<svg viewBox="16 26 168 126" class="${cls}" aria-hidden="true">${LOGO_SHIRT}</svg>`;
-const logoFull = (cls) => `<svg viewBox="10 22 180 172" class="${cls}" role="img" aria-label="${APP_NAME}">${LOGO_SHIRT}<text x="100" y="170" text-anchor="middle" font-family="Georgia,serif" font-weight="700" font-size="20" fill="#14213d">Retro</text><text x="100" y="188" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="10.5" fill="#b8860b" letter-spacing="3.5">FOOTBALL WEAR</text></svg>`;
-const brandMark = `<div class="flex items-center gap-2.5"><span class="grid place-items-center w-10 h-10 rounded-xl bg-cream-100 ring-1 ring-cream-200">${logoIcon('w-8 h-8')}</span><span class="leading-none"><span class="block font-serif font-bold text-[17px] text-brand-600">Retro</span><span class="block text-[9px] font-bold tracking-[0.25em] text-gold-700 mt-0.5">FOOTBALL WEAR</span></span></div>`;
+const APP_NAME = 'La Prima Mery';
+const logoIcon = (cls) => `<img src="logo/escudo-simple.svg" alt="" aria-hidden="true" class="${cls}">`;
+const logoFull = (cls) => `<img src="logo/escudo.svg" alt="${APP_NAME} — Equipación histórica" class="${cls}">`;
+const brandMark = `<div class="flex items-center gap-2.5">${logoIcon('w-9 h-auto drop-shadow-sm')}<span class="leading-none whitespace-nowrap"><span class="block font-serif font-bold text-[16px] sm:text-[18px] text-brand-600">La Prima Mery</span><span class="block text-[8px] sm:text-[9px] font-bold tracking-[0.2em] text-gold-700 mt-1">EQUIPACIÓN HISTÓRICA</span></span></div>`;
 const paypalLogo = '<span class="font-extrabold italic tracking-tight"><span class="text-[#003087]">Pay</span><span class="text-[#009cde]">Pal</span></span>';
 const badge = (status) => status === 'pagado'
-  ? '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 px-2 py-0.5 text-xs font-semibold">● Pagado</span>'
+  ? '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-200 px-2 py-0.5 text-xs font-semibold">● Pagado</span>'
   : '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2 py-0.5 text-xs font-semibold">● Pendiente</span>';
 const sizeChips = (items) => SIZES.filter(s => items?.[s]).map(s =>
   `<span class="inline-block rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">${s}×${items[s]}</span>`).join(' ');
@@ -238,7 +239,7 @@ const input = 'w-full rounded-xl border-0 ring-1 ring-slate-200 focus:ring-2 foc
 function render() {
   const u = me();
   const app = document.getElementById('app');
-  if (ui.loading) { app.innerHTML = `<div class="min-h-screen grid place-items-center"><div class="text-center">${logoFull('w-28 h-auto mx-auto animate-pulse')}<p class="text-sm text-slate-500 mt-3">Cargando…</p></div></div>`; return; }
+  if (ui.loading) { app.innerHTML = `<div class="min-h-screen grid place-items-center"><div class="text-center">${logoFull('w-40 h-auto mx-auto animate-pulse')}<p class="text-sm text-slate-500 mt-3">Cargando…</p></div></div>`; return; }
   if (!u) { app.innerHTML = renderLogin(); return; }
   if (!ui.tab) ui.tab = u.role === 'admin' ? 'panel' : 'catalogo';
   const tabs = u.role === 'admin'
@@ -248,9 +249,10 @@ function render() {
     panel: renderPanel, pedidos: renderOrders, modelos: renderModels, usuarios: renderUsers, ajustes: renderSettings,
     catalogo: renderCatalog, mis: renderMyOrders,
   }[ui.tab]?.() ?? '';
-  const roleTag = `<span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'}">${u.role === 'admin' ? 'Admin' : 'Usuario'}</span>`;
+  const roleTag = `<span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-pitch-50 text-pitch-700'}">${u.role === 'admin' ? 'Admin' : 'Usuario'}</span>`;
   app.innerHTML = `
-    <header class="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200 pt-[env(safe-area-inset-top)]">
+    <header class="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-cream-200 pt-[env(safe-area-inset-top)]">
+      <div class="franja"></div>
       <div class="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
         ${brandMark}
         <span class="hidden sm:inline">${roleTag}</span>
@@ -292,10 +294,10 @@ function profileSheet() {
 // ---------- login ----------
 function renderLogin() {
   return `
-  <div class="min-h-screen grid place-items-center px-4 py-8 pt-[calc(2rem+env(safe-area-inset-top))] bg-gradient-to-br from-cream-100 via-[#faf8f3] to-slate-100">
+  <div class="min-h-screen grid place-items-center px-4 py-8 pt-[calc(2rem+env(safe-area-inset-top))] bg-gradient-to-br from-cream-100 via-[#faf6ee] to-slate-100">
     <div class="w-full max-w-sm">
       <div class="bg-white rounded-3xl shadow-xl ring-1 ring-slate-100 p-7">
-        <div class="text-center mb-6">${logoFull('w-36 h-auto mx-auto')}<h1 class="sr-only">${APP_NAME}</h1><p class="text-sm text-slate-500 mt-2">Accede con tu usuario</p></div>
+        <div class="text-center mb-6">${logoFull('w-52 h-auto mx-auto')}<h1 class="sr-only">${APP_NAME}</h1><p class="text-sm text-slate-500 mt-2">Accede con tu usuario</p></div>
         <form id="login-form" onsubmit="event.preventDefault();App.login(this)" class="space-y-3">
           <div><label class="text-xs font-semibold text-slate-600">Usuario o email</label><input name="username" autocomplete="username" autocapitalize="none" class="${input} mt-1" required></div>
           <div><label class="text-xs font-semibold text-slate-600">Contraseña</label><input name="password" type="password" autocomplete="current-password" class="${input} mt-1" required></div>
@@ -379,7 +381,7 @@ function announceSheet(m, nUsers) {
   const a = ui.announce, n = a.batches.reduce((s, b) => s + b.length, 0);
   return `${sheetHead('Avisar por email')}
     <div class="p-5 space-y-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
-      ${m ? `<p class="text-sm text-emerald-700 font-semibold">✓ Notificación enviada en la app a ${nUsers} usuario${nUsers === 1 ? '' : 's'}.</p>` : ''}
+      ${m ? `<p class="text-sm text-pitch-700 font-semibold">✓ Notificación enviada en la app a ${nUsers} usuario${nUsers === 1 ? '' : 's'}.</p>` : ''}
       ${n ? `<p class="text-sm text-slate-600">Ahora envía el email desde tu correo: se abrirá ya redactado, con los ${n} destinatarios en <b>copia oculta</b> (nadie ve las direcciones de los demás). Solo tienes que pulsar «Enviar».</p>
         <div class="grid gap-2">${a.batches.map((b, i) => `<button class="${a.sent.includes(i) ? btnS : btnP} w-full !py-3" onclick="App.openAnnounceMail(${i})">${a.sent.includes(i) ? '✓ ' : '✉ '}Abrir mi correo${a.batches.length > 1 ? ` · tanda ${i + 1} de ${a.batches.length} (${b.length})` : ''}</button>`).join('')}</div>
         ${a.batches.length > 1 ? '<p class="text-xs text-slate-400">Son muchos destinatarios para un solo email: envía cada tanda por separado.</p>' : ''}`
@@ -473,7 +475,7 @@ function renderCard(m) {
       <div class="mt-auto pt-2 flex items-center gap-2">
         <div class="text-sm text-slate-500 flex-1">${total} ud${total === 1 ? '' : 's'} · <b class="text-slate-800">${money(total * m.price)}</b></div>
         ${locked
-          ? `<span class="text-xs text-emerald-700 font-semibold">Pedido pagado ✓</span>`
+          ? `<span class="text-xs text-pitch-700 font-semibold">Pedido pagado ✓</span>`
           : o
             ? `<button class="${btnS}" ${!changed || !total ? 'disabled' : ''} onclick="App.saveOrder('${m.id}')">Actualizar</button>
                <button class="${btn} bg-[#ffc439] hover:bg-[#f2b72f] text-slate-900" onclick="App.pay('${o.id}')">${paypalLogo}</button>`
@@ -501,7 +503,7 @@ function renderMyOrders() {
             <div class="font-semibold">${esc(m?.name || o.modelName)} ${m?.deletedAt ? '<span class="text-xs text-slate-400">(retirado)</span>' : ''}</div>
             <div class="mt-1">${sizeChips(o.items)}</div>
             <div class="text-xs text-slate-400 mt-1">Pedido ${fmtDate(o.createdAt)}${o.payment ? ` · Pagado ${fmtDate(o.payment.paidAt)} · Tx ${esc(o.payment.txId)}` : ''}</div>
-            ${o.confirmation ? `<div class="mt-2 rounded-xl bg-brand-50 ring-1 ring-brand-100 px-3 py-2 text-sm text-brand-700">
+            ${o.confirmation ? `<div class="mt-2 rounded-xl bg-pitch-50 ring-1 ring-pitch-100 px-3 py-2 text-sm text-pitch-700">
               <div class="font-semibold">✓ Pedido confirmado${o.confirmation.eta ? ` · entrega estimada: ${esc(o.confirmation.eta)}` : ''}</div>
               ${o.confirmation.message ? `<div class="text-slate-600 text-xs mt-0.5 whitespace-pre-line">${esc(o.confirmation.message)}</div>` : ''}</div>` : ''}
           </div>
@@ -557,7 +559,7 @@ function renderPanel() {
               <thead><tr class="text-xs text-slate-500"><th class="text-left font-semibold px-4 py-2">Talla</th>${SIZES.map(s => `<th class="font-semibold px-2 py-2 ${m.sizes.includes(s) ? '' : 'text-slate-300'}">${s}</th>`).join('')}<th class="font-semibold px-4 py-2 text-right">Total</th></tr></thead>
               <tbody>
                 <tr class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">Unidades</td>${SIZES.map(s => { const v = sum(all, s); return `<td class="px-2 py-2 text-center"><div class="font-bold ${v ? '' : 'text-slate-300'}">${v}</div><div class="h-1.5 mt-1 rounded bg-slate-100"><div class="h-1.5 rounded bg-brand-500" style="width:${(v / max) * 100}%"></div></div></td>`; }).join('')}<td class="px-4 py-2 text-right font-bold">${tot}</td></tr>
-                <tr class="border-t border-slate-100 text-emerald-700"><td class="px-4 py-1.5 text-xs font-semibold">Pagadas</td>${SIZES.map(s => `<td class="px-2 py-1.5 text-center text-xs">${sum(isPaid, s) || '·'}</td>`).join('')}<td class="px-4 py-1.5 text-right text-xs font-semibold">${os.filter(isPaid).reduce((a, o) => a + units(o.items), 0)}</td></tr>
+                <tr class="border-t border-slate-100 text-pitch-700"><td class="px-4 py-1.5 text-xs font-semibold">Pagadas</td>${SIZES.map(s => `<td class="px-2 py-1.5 text-center text-xs">${sum(isPaid, s) || '·'}</td>`).join('')}<td class="px-4 py-1.5 text-right text-xs font-semibold">${os.filter(isPaid).reduce((a, o) => a + units(o.items), 0)}</td></tr>
                 <tr class="border-t border-slate-100 text-amber-700"><td class="px-4 py-1.5 text-xs font-semibold">Pendientes</td>${SIZES.map(s => `<td class="px-2 py-1.5 text-center text-xs">${sum(isPend, s) || '·'}</td>`).join('')}<td class="px-4 py-1.5 text-right text-xs font-semibold">${os.filter(isPend).reduce((a, o) => a + units(o.items), 0)}</td></tr>
               </tbody>
             </table>
@@ -597,7 +599,7 @@ function renderOrders() {
             <div class="flex-1 min-w-0"><div class="font-semibold">${esc(u?.name || 'Usuario borrado')}</div><div class="text-sm text-slate-600 truncate">${esc(m?.name || o.modelName)}</div><div class="mt-1.5">${sizeChips(o.items)}</div></div>
             <div class="text-right"><div class="font-bold">${money(orderTotal(o))}</div><div class="mt-1">${badge(o.status)}</div></div>
           </div>
-          ${p ? `<div class="mt-3 rounded-xl bg-emerald-50/60 px-3 py-2 text-xs text-slate-600">Pagado por <b>${esc(userById(p.paidByUserId)?.name || p.payerName)}</b> · ${esc(p.payerEmail)}<br><span class="text-slate-400">${esc(p.method)} · ${esc(p.txId)} · ${fmtDate(p.paidAt)}</span></div>` : ''}
+          ${p ? `<div class="mt-3 rounded-xl bg-pitch-50/60 px-3 py-2 text-xs text-slate-600">Pagado por <b>${esc(userById(p.paidByUserId)?.name || p.payerName)}</b> · ${esc(p.payerEmail)}<br><span class="text-slate-400">${esc(p.method)} · ${esc(p.txId)} · ${fmtDate(p.paidAt)}</span></div>` : ''}
           ${o.confirmation ? `<div class="mt-2">${confirmChip(o)}</div>` : ''}
           <div class="flex gap-2 mt-3">
             <button class="${o.confirmation ? btnS : btnP} flex-1" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
@@ -758,9 +760,9 @@ function renderUsers() {
           const os = db.orders.filter(o => o.userId === u.id);
           return `<tr class="border-t border-slate-100">
             <td class="px-4 py-3"><div class="font-semibold">${esc(u.name)}</div>${u.needsPassword ? '<div class="text-xs text-amber-600 font-semibold">Sin contraseña aún</div>' : ''}</td><td class="px-3">@${esc(u.username)}</td><td class="px-3 text-slate-500">${esc(u.email)}</td>
-            <td class="px-3"><span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'}">${u.role}</span></td>
+            <td class="px-3"><span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-pitch-50 text-pitch-700'}">${u.role}</span></td>
             <td class="px-3 text-xs">${os.length} (${os.filter(o => o.status === 'pagado').length} pagados)</td>
-            <td class="px-3">${u.active ? '<span class="text-xs text-emerald-700 font-semibold">Activo</span>' : '<span class="text-xs text-slate-400 font-semibold">Desactivado</span>'}</td>
+            <td class="px-3">${u.active ? '<span class="text-xs text-pitch-700 font-semibold">Activo</span>' : '<span class="text-xs text-slate-400 font-semibold">Desactivado</span>'}</td>
             <td class="px-4 py-2 text-right whitespace-nowrap">
               <button class="${btnS} !px-2 !py-1" onclick="App.editUser('${u.id}')" title="Editar">${ic.edit}</button>
               <button class="${btnS} !px-2 !py-1 text-xs" onclick="App.sendPasswordEmail('${u.id}')" title="Enviar email para crear o cambiar la contraseña">✉ Email</button>
@@ -891,7 +893,7 @@ Cuenta PayPal: ${o.payment.payerEmail} · Transacción ${o.payment.txId}`);
 function paySuccess(o, txId) {
   document.getElementById('pp-body').innerHTML = `
     <div class="text-center py-6">
-      <div class="mx-auto w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 grid place-items-center text-3xl">✓</div>
+      <div class="mx-auto w-14 h-14 rounded-full bg-pitch-100 text-pitch-600 grid place-items-center text-3xl">✓</div>
       <h3 class="font-bold text-lg mt-3">Pago completado</h3>
       <p class="text-sm text-slate-500 mt-1">${money(orderTotal(o))} · Transacción <span class="font-mono">${esc(txId)}</span></p>
       <p class="text-xs text-slate-400 mt-1">El administrador ya ve tu pedido como <b>Pagado</b>.</p>
@@ -910,7 +912,7 @@ const unread = () => db.notifications.filter(n => n.to === ui.sessionId && !n.re
 
 function sysNotify(title, body) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'rfw-' + Date.now() };
+  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'lpm-' + Date.now() };
   (navigator.serviceWorker?.getRegistration() ?? Promise.resolve(null))
     .then(reg => reg ? reg.showNotification(title, opts) : new Notification(title, opts))
     .catch(() => { try { new Notification(title, opts); } catch {} });
@@ -981,7 +983,7 @@ function confirmForm(o) {
       </div>
     </form>`;
 }
-const confirmChip = (o) => o.confirmation ? `<span class="inline-flex items-center whitespace-nowrap rounded-full bg-brand-50 text-brand-700 ring-1 ring-brand-100 px-2 py-0.5 text-xs font-semibold">✓ Confirmado${o.confirmation.eta ? ` · ${esc(o.confirmation.eta)}` : ''}</span>` : '';
+const confirmChip = (o) => o.confirmation ? `<span class="inline-flex items-center whitespace-nowrap rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-100 px-2 py-0.5 text-xs font-semibold">✓ Confirmado${o.confirmation.eta ? ` · ${esc(o.confirmation.eta)}` : ''}</span>` : '';
 const bellBtn = () => { const n = unread(); return `<button class="relative grid place-items-center w-10 h-10 rounded-xl hover:bg-slate-100 text-slate-600" onclick="App.openInbox()" aria-label="Buzón${n ? `: ${n} sin leer` : ''}">
   <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>
   ${n ? `<span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] grid place-items-center rounded-full bg-rose-500 text-white text-[10px] font-bold px-1">${n > 9 ? '9+' : n}</span>` : ''}</button>`; };
@@ -1006,12 +1008,12 @@ function installSheet() {
       <li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">2</span><span>Elige <b>«Añadir a pantalla de inicio»</b>.</span></li>
       <li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">3</span><span>Pulsa <b>Añadir</b>: el icono aparecerá junto a tus apps.</span></li></ol>`;
   else if (isMobile()) how = `<p class="text-sm text-slate-700">Abre el menú del navegador <b>⋮</b> y elige <b>«Instalar aplicación»</b> o <b>«Añadir a pantalla de inicio»</b>.</p>`;
-  else how = `<p class="text-sm text-slate-700">En <b>Chrome</b> o <b>Edge</b>, pulsa el icono de instalar <span class="inline-grid place-items-center w-5 h-5 rounded ring-1 ring-slate-300 text-xs align-middle">⊕</span> a la derecha de la barra de direcciones, o abre el menú <b>⋮</b> → <b>«Instalar Retro Football Wear»</b>.</p>`;
+  else how = `<p class="text-sm text-slate-700">En <b>Chrome</b> o <b>Edge</b>, pulsa el icono de instalar <span class="inline-grid place-items-center w-5 h-5 rounded ring-1 ring-slate-300 text-xs align-middle">⊕</span> a la derecha de la barra de direcciones, o abre el menú <b>⋮</b> → <b>«Instalar La Prima Mery»</b>.</p>`;
   return `
     <div class="p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
       <div class="sm:hidden mx-auto w-10 h-1 rounded-full bg-slate-200 mb-4"></div>
       <div class="flex items-center gap-4 mb-4">
-        <span class="grid place-items-center w-16 h-16 rounded-2xl bg-cream-100 ring-1 ring-cream-200 shrink-0">${logoIcon('w-12 h-12')}</span>
+        <img src="icons/icon-192.png" alt="" class="w-16 h-16 rounded-2xl shadow shrink-0">
         <div><h2 class="font-bold text-lg leading-tight">Instala ${APP_NAME}</h2><p class="text-sm text-slate-500">Tenla en ${where} como una app más: acceso directo, pantalla completa y carga rápida.</p></div>
       </div>
       ${how}
@@ -1021,7 +1023,7 @@ function installSheet() {
 }
 // Se ofrece una sola vez por usuario y dispositivo, al iniciar sesión por primera vez.
 function offerInstallOnce() {
-  const u = me(), key = 'rfw_install_offered_' + u?.id;
+  const u = me(), key = 'lpm_install_offered_' + u?.id;
   if (!u || !canInstall() || store.getItem(key)) return;
   store.setItem(key, new Date().toISOString());
   setTimeout(() => { if (me()?.id === u.id && !document.getElementById('modal-root').innerHTML) openModal(installSheet()); }, 700);

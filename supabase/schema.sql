@@ -1,5 +1,5 @@
 -- =====================================================================
--- Retro Football Wear — esquema de Supabase
+-- La Prima Mery — esquema de Supabase
 -- Ejecutar una vez en el SQL Editor del proyecto. Es idempotente: se puede volver a lanzar.
 --
 -- Diseño: cada entidad de la app se guarda tal cual en una columna jsonb "data" (mismo formato que

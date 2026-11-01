@@ -1,11 +1,11 @@
-// Retro Football Wear — Edge Function "notify-new-model"
+// La Prima Mery — Edge Function "notify-new-model"
 // Envía un email a todos los usuarios activos cuando un administrador publica un modelo nuevo.
 // El envío se hace con la API de Brevo (plan gratuito: 300 emails/día).
 //
 // Secretos necesarios (Supabase → Edge Functions → Secrets):
 //   BREVO_API_KEY   clave de API de Brevo (Brevo → SMTP & API → API Keys)
 //   MAIL_FROM       email remitente verificado en Brevo
-//   MAIL_FROM_NAME  (opcional) nombre del remitente; por defecto "Retro Football Wear"
+//   MAIL_FROM_NAME  (opcional) nombre del remitente; por defecto "La Prima Mery"
 // SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY los pone Supabase automáticamente.
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4';
 
@@ -46,19 +46,19 @@ Deno.serve(async (req) => {
     const to = (users ?? []).filter((u) => u.email && !isTestAddress(u.email));
     if (!to.length) return json({ sent: 0, skipped: (users ?? []).length });
 
-    const html = `<!doctype html><html><body style="margin:0;background:#faf8f3;font-family:Arial,Helvetica,sans-serif;color:#14213d">
+    const html = `<!doctype html><html><body style="margin:0;background:#faf6ee;font-family:Arial,Helvetica,sans-serif;color:#7b1e2e">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
     <table role="presentation" width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden">
-      <tr><td style="padding:20px 24px;background:#14213d;color:#ffffff;font-family:Georgia,serif;font-size:20px;font-weight:bold">Retro <span style="color:#e8b624;font-family:Arial;font-size:12px;letter-spacing:3px">FOOTBALL WEAR</span></td></tr>
+      <tr><td style="padding:20px 24px;background:#7b1e2e;color:#ffffff;font-family:Georgia,serif;font-size:20px;font-weight:bold">La Prima Mery <span style="color:#c9a23a;font-family:Arial;font-size:11px;letter-spacing:3px">EQUIPACIÓN HISTÓRICA</span></td></tr>
       ${cover ? `<tr><td><img src="${esc(cover)}" alt="${esc(m.name)}" width="520" style="display:block;width:100%;height:auto"></td></tr>` : ''}
       <tr><td style="padding:24px">
-        <p style="margin:0 0 6px;font-size:13px;color:#b8860b;font-weight:bold;text-transform:uppercase;letter-spacing:1px">Nuevo modelo disponible</p>
+        <p style="margin:0 0 6px;font-size:13px;color:#8f7020;font-weight:bold;text-transform:uppercase;letter-spacing:1px">Nuevo modelo disponible</p>
         <h1 style="margin:0 0 8px;font-size:22px">${esc(m.name)}</h1>
         <p style="margin:0 0 12px;font-size:15px;color:#475569">${esc(m.description)}</p>
         <p style="margin:0 0 20px;font-size:18px;font-weight:bold">${esc(price)}</p>
-        ${base ? `<a href="${esc(base)}" style="display:inline-block;background:#14213d;color:#ffffff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:12px">Ver y pedir mi talla</a>` : ''}
+        ${base ? `<a href="${esc(base)}" style="display:inline-block;background:#7b1e2e;color:#ffffff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:12px">Ver y pedir mi talla</a>` : ''}
       </td></tr>
-      <tr><td style="padding:16px 24px;font-size:12px;color:#94a3b8;border-top:1px solid #f1f5f9">Recibes este aviso porque tienes cuenta en Retro Football Wear. Si no quieres recibirlos, díselo al administrador.</td></tr>
+      <tr><td style="padding:16px 24px;font-size:12px;color:#94a3b8;border-top:1px solid #f1f5f9">Recibes este aviso porque tienes cuenta en La Prima Mery. Si no quieres recibirlos, díselo al administrador.</td></tr>
     </table>
   </td></tr></table></body></html>`;
 
@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
       method: 'POST',
       headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({
-        sender: { email: from, name: Deno.env.get('MAIL_FROM_NAME') || 'Retro Football Wear' },
+        sender: { email: from, name: Deno.env.get('MAIL_FROM_NAME') || 'La Prima Mery' },
         subject: `Nuevo modelo: ${m.name}`,
         htmlContent: html,
         // una versión por destinatario: cada uno recibe su propio email sin ver a los demás

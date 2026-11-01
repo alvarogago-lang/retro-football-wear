@@ -1,5 +1,5 @@
 -- =====================================================================
--- Retro Football Wear — 002: primera contraseña por email y recuperación por email o SMS
+-- La Prima Mery — 002: primera contraseña por email y recuperación por email o SMS
 -- Ejecutar después de schema.sql. Idempotente.
 --
 -- · Un administrador puede crear cuentas sin contraseña: al intentar entrar por primera vez, el usuario

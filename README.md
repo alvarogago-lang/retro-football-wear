@@ -6,8 +6,8 @@ App web instalable (PWA) para pedir ropa de fútbol retro: camisetas, pantalones
 
 ## Qué hace
 
-- **Usuarios:** ven el catálogo (filtros por tipo, texto y modelo), eligen tallas S–4XL y cantidad, piden un pedido por modelo y pagan con PayPal (simulado o PayPal Sandbox).
-- **Administradores:** publican y editan modelos con fotos (se mejoran al subirlas), gestionan tipos de modelo, crean y gestionan cuentas, ven el panel de unidades por modelo y talla para encargar lotes de fabricación, registran pagos y confirman pedidos con plazo de entrega opcional.
+- **Usuarios:** ven el catálogo (filtros por tipo, texto y modelo; fotos ampliables deslizando), eligen tallas S–4XL y cantidad y envían una solicitud por modelo. El pago se hace fuera de la app (ver «Solicitudes y pago»).
+- **Administradores:** publican y editan modelos con fotos (se mejoran al subirlas), gestionan tipos de modelo, crean y gestionan cuentas, ven el panel de unidades por modelo y talla para encargar lotes de fabricación, aprueban solicitudes y validan pagos con fecha de entrega.
 - **Avisos:** buzón con notificaciones y copia de correos; notificaciones del sistema y cambios en tiempo real entre dispositivos.
 - **Instalable** en PC (Chrome/Edge), Android e iPhone, con interfaz adaptada al móvil.
 
@@ -45,7 +45,7 @@ Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_
 
 ## Pestaña Pedidos (administrador)
 
-Tres tablas de 10 filas con paginación y un filtro en cada columna: **Pedidos activos** (además: texto, tipo, modelo, estado y fechas), **Pedidos por usuario** (último mes, últimos 6 meses, importe y último pedido) y **Registro de pagos** (fechas, usuario y cuenta PayPal).
+Tres tablas de 10 filas con paginación y un filtro en cada columna: **Pedidos activos** (estado y acciones Aprobar / Validar pago), **Pedidos por usuario** (solo pedidos con pago confirmado: último mes, últimos 6 meses, importe y último pedido) y **Registro de solicitudes y confirmación de pago** (fecha, usuario, fecha de aprobación de la solicitud, fecha de aprobación del pago e importe; «Pendiente» si falta).
 
 ## Bajas por inactividad
 
@@ -61,13 +61,21 @@ Cada día (pg_cron, 07:00 UTC) se proponen para baja los usuarios sin pedidos en
 
 En Modelos, el botón **Oferta** (debajo de Editar) activa o desactiva una oferta por modelo: **descuento %**, **por unidades** (lleva N y paga M, p. ej. 3x2) o **tiempo limitado** (descuento con cuenta atrás en días u horas, que se desactiva sola al terminar). En el catálogo los modelos en oferta salen los primeros, con una etiqueta sobre la foto y el precio rebajado. Cada pedido guarda la oferta con la que se hizo, así que su precio no cambia después.
 
-## Pagos con PayPal (reales)
+## Solicitudes y pago (fuera de la app)
 
-- El usuario paga con su cuenta PayPal o con tarjeta. El **servidor** (Edge Function `supabase/functions/paypal`) crea el cobro con el importe calculado a partir del pedido (ofertas incluidas) y lo confirma con PayPal; solo entonces el pedido pasa a **Pagado**, se registra el pago (cuenta PayPal, transacción) y se avisa a los administradores.
-- Configuración desde la app, **Ajustes → Pagos con PayPal**: modo Real o Pruebas, **Client ID** y **Secret** (de developer.paypal.com → Apps & Credentials, con una cuenta PayPal Business). El Secret se guarda en la tabla protegida `app_secrets` (migración `supabase/006_secretos.sql`), que solo lee la Edge Function. El botón «Probar conexión» comprueba las credenciales.
+1. **Solicitado:** el usuario envía la solicitud. Aviso en la app a los administradores y email al usuario, a los administradores y a laprimamery@gmail.com.
+2. **Aprobado · pendiente de pago:** el administrador la aprueba (Pedidos → Aprobar). El usuario recibe notificación y email con el texto fijo: depósito por PayPal a **daniordo191119@icloud.com** e importe. Desde aquí el usuario ya no puede cambiar ni cancelar la solicitud.
+3. **Pago comunicado:** el usuario pulsa en Mis pedidos «Ya he pagado: solicitar confirmación del pago» (lo cambia el servidor, en send-mail) y se avisa a los administradores.
+4. **Pago confirmado:** el administrador comprueba el pago y lo valida (Pedidos → Validar pago) indicando la fecha de entrega; el usuario recibe notificación y email.
+
+La cuenta de PayPal y el texto están en `PAYPAL_ACCOUNT` / `APPROVAL_TEXT` de `index.html` y de `supabase/functions/send-mail/index.ts`. La Edge Function `paypal` y la tabla `payments` quedan sin uso.
+
+## Código QR
+
+«Invitar a un amigo» e «Instalar app» muestran un QR (librería qrcode-generator) que lleva a la app; el de la invitación abre directamente «Crear cuenta».
 
 ## Emails automáticos (desde laprimamery@gmail.com)
 
 - **Modelo nuevo** y **oferta activada o cambiada** → a todos los usuarios activos (copia oculta, tandas de 50) + notificación en la app.
-- **Pedido hecho** → «Hemos recibido tu pedido» al usuario. **Confirmación** del administrador (con plazo de entrega opcional) → al usuario.
+- **Solicitud**, **aprobación**, **pago comunicado** y **pago validado**: ver «Solicitudes y pago».
 - **Mensajes**: el administrador puede iniciar una conversación (Buzón → Mensajes → Nueva conversación). Cada mensaje llega por la app y por email al usuario y a los administradores, con copia oculta a laprimamery@gmail.com.

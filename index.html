@@ -15,6 +15,7 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icons/lpm-192.png">
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
   tailwind.config = { theme: { extend: { colors: { brand: { 50:'#faf1f2',100:'#f2dfe2',500:'#9b3445',600:'#7b1e2e',700:'#5f1622' }, gold: { 400:'#e0c063',500:'#c9a23a',700:'#8f7020' }, cream: { 100:'#f3eadb',200:'#e6d8bd' }, pitch: { 50:'#edf5f0',100:'#d6e8dd',200:'#b9d6c4',600:'#1e4d35',700:'#163a28' } }, fontFamily: { serif: ['Georgia', '"Times New Roman"', 'serif'] } } } };
 </script>
@@ -65,7 +66,7 @@ const imgTag = (src, m, cls = '') =>
 const SB_URL = 'https://jyqdglmhsbuzvivxmdkp.supabase.co';
 const SB_KEY = 'sb_publishable_BRVEWF8vro8wpiT3xhVQWg_40i4Hjpc'; // clave pública: segura en el navegador gracias a RLS
 const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
-const TABLES = ['categories', 'models', 'orders', 'payments', 'notifications', 'emails', 'contact'];
+const TABLES = ['categories', 'models', 'orders', 'notifications', 'emails', 'contact'];
 
 // Preferencias de este dispositivo (aviso de instalación); si el navegador bloquea el almacenamiento, en memoria.
 function safeStore(kind) {
@@ -74,8 +75,8 @@ function safeStore(kind) {
 }
 const store = safeStore('localStorage');
 
-const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], payments: [], notifications: [], emails: [], contact: [],
-  settings: { currency: 'EUR', maxUnits: 5, paypalClientId: '', alertEmail: true, alertNotif: true } });
+const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], notifications: [], emails: [], contact: [],
+  settings: { currency: 'EUR', maxUnits: 5, alertEmail: true, alertNotif: true } });
 let db = emptyDb();
 let synced = {}; // copia de lo último leído/escrito en la nube, para enviar solo los cambios
 
@@ -236,10 +237,20 @@ const CONTACT_EMAIL = 'laprimamery@gmail.com';
 const logoIcon = (cls) => `<img src="logo/escudo-simple.svg" alt="" aria-hidden="true" class="${cls}">`;
 const logoFull = (cls) => `<img src="logo/escudo.svg" alt="${APP_NAME} — Equipación histórica" class="${cls}">`;
 const brandMark = `<div class="flex items-center gap-2.5">${logoIcon('w-9 h-auto drop-shadow-sm')}<span class="leading-none whitespace-nowrap"><span class="block font-serif font-bold text-[16px] sm:text-[18px] text-brand-600">La Prima Mery</span><span class="block text-[8px] sm:text-[9px] font-bold tracking-[0.2em] text-gold-700 mt-1">EQUIPACIÓN HISTÓRICA</span></span></div>`;
-const paypalLogo = '<span class="font-extrabold italic tracking-tight"><span class="text-[#003087]">Pay</span><span class="text-[#009cde]">Pal</span></span>';
-const badge = (status) => status === 'pagado'
-  ? '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-200 px-2 py-0.5 text-xs font-semibold">● Pagado</span>'
-  : '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2 py-0.5 text-xs font-semibold">● Pendiente</span>';
+// Pago fuera de la app: el admin aprueba la solicitud (con este texto siempre), el usuario hace el depósito por PayPal,
+// lo comunica desde Mis pedidos y el admin valida el pago indicando la fecha de entrega.
+const PAYPAL_ACCOUNT = 'daniordo191119@icloud.com';
+const APPROVAL_TEXT = `Su solicitud ha sido aprobada. Para finalizar el pedido haga el depósito a través de PayPal a la cuenta ${PAYPAL_ACCOUNT}. Una vez realizado el pago solicite en sus pedidos la confirmación del mismo y en cuanto reciba la notificación de que el pago se ha realizado de forma correcta recibirá el producto en la fecha que el admin indique al validar la confirmación del pago.`;
+const STATUS = {
+  pendiente: ['Solicitado', 'bg-amber-50 text-amber-700 ring-amber-200'],
+  aprobado: ['Aprobado · pendiente de pago', 'bg-sky-50 text-sky-700 ring-sky-200'],
+  pago_comunicado: ['Pago comunicado', 'bg-violet-50 text-violet-700 ring-violet-200'],
+  pagado: ['Pago confirmado', 'bg-pitch-50 text-pitch-700 ring-pitch-200'],
+};
+const statusLabel = (s) => (STATUS[s] || STATUS.pendiente)[0];
+const badge = (status) => { const [l, c] = STATUS[status] || STATUS.pendiente; return `<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full ring-1 px-2 py-0.5 text-xs font-semibold ${c}">● ${l}</span>`; };
+const fmtDay = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+const deliveryDate = (o) => o.delivery?.date ? fmtDay(o.delivery.date) : o.confirmation?.eta || '';
 const sizeChips = (items) => SIZES.filter(s => items?.[s]).map(s =>
   `<span class="inline-block rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">${s}×${items[s]}</span>`).join(' ');
 const btn = 'inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed';
@@ -676,7 +687,7 @@ function renderCatalog() {
     <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">${models.map(renderCard).join('') || empty('No hay modelos que coincidan', 'Prueba con otra búsqueda u otro tipo.', `<button class="${btnS} mt-4" onclick="App.clearCatalogFilters()">Quitar filtros</button>`)}</div>`;
 }
 function renderCard(m) {
-  const s = selFor(m), o = myOrderFor(m.id), locked = o?.status === 'pagado';
+  const s = selFor(m), o = myOrderFor(m.id), locked = !!o && o.status !== 'pendiente'; // aprobado: ya no se cambia
   const total = units(s.items), imgs = m.images.length ? m.images : [fallbackFor(m)];
   const changed = JSON.stringify(cleanItems(s.items)) !== JSON.stringify(cleanItems(o?.items || {}));
   return `
@@ -708,10 +719,9 @@ function renderCard(m) {
       <div class="mt-auto pt-2 flex items-center gap-2">
         <div class="text-sm text-slate-500 flex-1">${total} ud${total === 1 ? '' : 's'} · <b class="text-slate-800">${money(locked ? orderTotal(o) : offerPrice(offerSnapshot(m), m.price, total))}</b>${!locked && offerActive(m) && total && offerPrice(offerSnapshot(m), m.price, total) < total * m.price ? ` <s class="text-xs text-slate-400">${money(total * m.price)}</s>` : ''}</div>
         ${locked
-          ? `<span class="text-xs text-pitch-700 font-semibold">Pedido pagado ✓</span>`
+          ? `<button class="${btnS}" onclick="App.go('mis')">Ver en Mis pedidos</button>`
           : o
-            ? `<button class="${btnS}" ${!changed || !total ? 'disabled' : ''} onclick="App.saveOrder('${m.id}')">Actualizar</button>
-               <button class="${btn} bg-[#ffc439] hover:bg-[#f2b72f] text-slate-900" onclick="App.pay('${o.id}')">${paypalLogo}</button>`
+            ? `<button class="${btnS}" ${!changed || !total ? 'disabled' : ''} onclick="App.saveOrder('${m.id}')">Actualizar</button>`
             : `<button class="${btnP}" ${!total ? 'disabled' : ''} onclick="App.saveOrder('${m.id}')">Solicitar</button>`}
       </div>
       ${o && !locked ? `<button onclick="App.cancelOrder('${o.id}')" class="text-xs text-slate-400 hover:text-rose-600 self-start">Cancelar mi pedido</button>` : ''}
@@ -724,9 +734,9 @@ const cleanItems = (items) => Object.fromEntries(SIZES.filter(s => items[s]).map
 function renderMyOrders() {
   const list = db.orders.filter(o => o.userId === ui.sessionId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   if (!list.length) return empty('Aún no has hecho pedidos', 'Ve al catálogo, elige tu talla y solicita tu camiseta.', `<button class="${btnP} mt-4" onclick="App.go('catalogo')">Ir al catálogo</button>`);
-  const pend = list.filter(o => o.status !== 'pagado').reduce((a, o) => a + orderTotal(o), 0);
+  const pend = list.filter(o => o.status === 'aprobado').reduce((a, o) => a + orderTotal(o), 0);
   return `
-    <div class="flex flex-wrap items-end gap-3 mb-5"><div class="flex-1"><h1 class="text-2xl font-bold">Mis pedidos</h1><p class="text-sm text-slate-500">Pendiente de pago: <b>${money(pend)}</b></p></div></div>
+    <div class="flex flex-wrap items-end gap-3 mb-5"><div class="flex-1"><h1 class="text-2xl font-bold">Mis pedidos</h1><p class="text-sm text-slate-500">${pend ? `Pendiente de pago: <b>${money(pend)}</b> por PayPal a <b>${PAYPAL_ACCOUNT}</b>` : 'Aquí ves el estado de cada solicitud.'}</p></div></div>
     <div class="grid gap-3">
       ${list.map(o => {
         const m = modelById(o.modelId);
@@ -735,16 +745,29 @@ function renderMyOrders() {
           <div class="flex-1 min-w-[180px]">
             <div class="font-semibold">${esc(m?.name || o.modelName)} ${m?.deletedAt ? '<span class="text-xs text-slate-400">(retirado)</span>' : ''}</div>
             <div class="mt-1">${sizeChips(o.items)}</div>
-            <div class="text-xs text-slate-400 mt-1">Pedido ${fmtDate(o.createdAt)}${o.payment ? ` · Pagado ${fmtDate(o.payment.paidAt)} · Tx ${esc(o.payment.txId)}` : ''}</div>
-            ${o.confirmation ? `<div class="mt-2 rounded-xl bg-pitch-50 ring-1 ring-pitch-100 px-3 py-2 text-sm text-pitch-700">
-              <div class="font-semibold">✓ Pedido confirmado${o.confirmation.eta ? ` · entrega estimada: ${esc(o.confirmation.eta)}` : ''}</div>
-              ${o.confirmation.message ? `<div class="text-slate-600 text-xs mt-0.5 whitespace-pre-line">${esc(o.confirmation.message)}</div>` : ''}</div>` : ''}
+            <div class="text-xs text-slate-400 mt-1">Solicitado ${fmtDate(o.createdAt)}</div>
           </div>
           <div class="text-right"><div class="font-bold">${money(orderTotal(o))}</div><div class="mt-1">${badge(o.status)}</div></div>
-          ${o.status !== 'pagado' ? `<button class="${btn} bg-[#ffc439] hover:bg-[#f2b72f] text-slate-900 w-full sm:w-auto" onclick="App.pay('${o.id}')">Pagar con ${paypalLogo}</button>` : ''}
+          <div class="w-full">${myOrderStep(o)}</div>
         </div>`;
       }).join('')}
     </div>`;
+}
+// Qué toca hacer ahora con cada pedido, según su estado.
+function myOrderStep(o) {
+  const box = (cls, html) => `<div class="rounded-xl ring-1 px-3 py-2.5 text-sm ${cls}">${html}</div>`;
+  const note = (t) => t ? `<div class="text-slate-600 text-xs mt-1 whitespace-pre-line">${esc(t)}</div>` : '';
+  if (o.status === 'aprobado') return box('bg-sky-50 ring-sky-100 text-slate-700', `
+    <div class="font-semibold text-sky-800">Solicitud aprobada · Importe a ingresar: ${money(orderTotal(o))}</div>
+    <p class="mt-1">${esc(APPROVAL_TEXT)}</p>${note(o.approval?.message)}
+    <button class="${btnP} mt-3 w-full sm:w-auto" onclick="App.requestPaymentCheck('${o.id}')">Ya he pagado: solicitar confirmación del pago</button>`);
+  if (o.status === 'pago_comunicado') return box('bg-violet-50 ring-violet-100 text-violet-800', `
+    <div class="font-semibold">Has comunicado el pago${o.paymentNotice?.at ? ` el ${fmtDate(o.paymentNotice.at)}` : ''}.</div>
+    <div class="text-xs mt-0.5">Te avisaremos en cuanto comprobemos que el pago se ha realizado correctamente.</div>`);
+  if (o.status === 'pagado') return box('bg-pitch-50 ring-pitch-100 text-pitch-700', `
+    <div class="font-semibold">✓ Pago confirmado${deliveryDate(o) ? ` · recibirás el producto el ${esc(deliveryDate(o))}` : ''}</div>${note(o.delivery?.message || o.confirmation?.message)}`);
+  return `<div class="flex flex-wrap items-center gap-2 text-xs text-slate-500"><span class="flex-1">Solicitud enviada. Te avisaremos cuando La Prima Mery la apruebe; hasta entonces puedes cambiarla en el catálogo.</span>
+    <button onclick="App.cancelOrder('${o.id}')" class="font-semibold text-slate-400 hover:text-rose-600">Cancelar solicitud</button></div>`;
 }
 const orderTotal = (o) => offerPrice(o.offer, o.unitPrice ?? modelById(o.modelId)?.price ?? 0, units(o.items));
 
@@ -762,12 +785,12 @@ function renderPanel() {
   return `
     <div class="flex flex-wrap items-end gap-3 mb-5">
       <div class="flex-1"><h1 class="text-2xl font-bold">Panel de pedidos</h1><p class="text-sm text-slate-500">Unidades solicitadas por modelo y talla para preparar los lotes de fabricación.</p></div>
-      <label class="flex items-center gap-2 text-sm font-medium bg-white ring-1 ring-slate-200 rounded-xl px-3 py-2"><input type="checkbox" class="accent-brand-600" ${ui.panelPaidOnly ? 'checked' : ''} onchange="App.setPanelPaid(this.checked)"> Solo pedidos pagados</label>
+      <label class="flex items-center gap-2 text-sm font-medium bg-white ring-1 ring-slate-200 rounded-xl px-3 py-2"><input type="checkbox" class="accent-brand-600" ${ui.panelPaidOnly ? 'checked' : ''} onchange="App.setPanelPaid(this.checked)"> Solo con pago confirmado</label>
       <button class="${btnS}" onclick="App.exportBatch()">${ic.dl} Lote de fabricación (CSV)</button>
     </div>
     ${(() => { const n = db.users.filter(u => u.pending).length; return n ? `<button onclick="App.go('usuarios')" class="w-full mb-4 flex items-center gap-3 rounded-2xl bg-cream-100 ring-1 ring-gold-500/50 px-4 py-3 text-left hover:bg-cream-200/60"><span class="grid place-items-center w-9 h-9 rounded-full bg-brand-600 text-white font-bold">${n}</span><span class="flex-1"><span class="block font-semibold text-brand-700">${n === 1 ? 'Hay 1 solicitud de cuenta' : 'Hay ' + n + ' solicitudes de cuenta'} pendiente${n === 1 ? '' : 's'} de validar</span><span class="block text-sm text-slate-500">Revísalas en Usuarios</span></span><span class="text-brand-700 font-bold">→</span></button>` : ''; })()}
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-      ${kpi('Pedidos', db.orders.length, `${paid.length} pagados · ${db.orders.length - paid.length} pendientes`)}
+      ${kpi('Pedidos', db.orders.length, `${paid.length} con pago confirmado · ${db.orders.length - paid.length} sin confirmar`)}
       ${kpi('Unidades totales', db.orders.reduce((a, o) => a + units(o.items), 0), `${paid.reduce((a, o) => a + units(o.items), 0)} pagadas`)}
       ${kpi('Usuarios con pedido', new Set(db.orders.map(o => o.userId)).size, `de ${db.users.filter(u => u.role === 'user' && !u.pending).length} usuarios`)}
       ${kpi('Cobrado', money(paid.reduce((a, o) => a + orderTotal(o), 0)), `Pendiente: ${money(db.orders.filter(o => o.status !== 'pagado').reduce((a, o) => a + orderTotal(o), 0))}`)}
@@ -850,14 +873,11 @@ const inRange = (iso, from, to) => (!from || (iso || '') >= from) && (!to || (is
 const dateInputs = (prefix, f) => `
   <label class="flex items-center gap-1.5 text-xs text-slate-500">Desde <input type="date" class="${input} !w-auto !py-1.5" value="${esc(f.from || '')}" onchange="App.filter('${prefix}from',this.value)"></label>
   <label class="flex items-center gap-1.5 text-xs text-slate-500">Hasta <input type="date" class="${input} !w-auto !py-1.5" value="${esc(f.to || '')}" onchange="App.filter('${prefix}to',this.value)"></label>`;
-// Cuenta PayPal del pago: titular e identificador de PayPal si el pago es real; en los simulados, la cuenta indicada.
-const paypalAccount = (p) => p.payerId ? `${p.payerName || 'PayPal'} · ID ${p.payerId}` : /simulado/i.test(p.method || '') ? `${p.payerEmail || '—'} (simulado)` : /manual/i.test(p.method || '') ? 'Pago manual' : (p.payerName || p.payerEmail || '—');
-
 function filteredOrders() {
   const f = ui.filters, q = f.q.trim().toLowerCase();
   return db.orders.filter(o => (!f.model || o.modelId === f.model) && (!f.status || o.status === f.status) && inCat(modelById(o.modelId), f.cat) &&
     inRange(o.createdAt, f.from, f.to) &&
-    (!q || (userById(o.userId)?.name || '').toLowerCase().includes(q) || (o.payment?.txId || '').toLowerCase().includes(q)))
+    (!q || (userById(o.userId)?.name || '').toLowerCase().includes(q)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 function renderOrders() {
@@ -872,27 +892,25 @@ function renderOrders() {
     { key: 'modelo', label: 'Modelo', options: [...new Set(db.orders.map(o => modelById(o.modelId)?.name || o.modelName))].sort(), text: o => modelById(o.modelId)?.name || o.modelName, html: o => { const m = modelById(o.modelId); return esc(m?.name || o.modelName) + (m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''); } },
     { key: 'tallas', label: 'Tallas', options: SIZES.filter(s => db.orders.some(o => o.items?.[s])), match: (o, s) => (o.items?.[s] || 0) > 0, text: o => itemsText(o.items), html: o => sizeChips(o.items) },
     { key: 'importe', label: 'Importe', text: o => money(orderTotal(o)), sort: o => orderTotal(o), cls: 'text-right whitespace-nowrap', html: o => `<b>${money(orderTotal(o))}</b>` },
-    { key: 'estado', label: 'Estado', text: o => o.status + (o.confirmation ? ' confirmado' : ''), html: o => `<div class="flex flex-col items-start gap-1">${badge(o.status)}${confirmChip(o)}</div>` },
-    { key: 'pago', label: 'Pago registrado', text: o => o.payment ? `${userById(o.payment.paidByUserId)?.name || o.payment.payerName} ${paypalAccount(o.payment)} ${o.payment.txId}` : '',
-      html: o => { const p = o.payment; return p ? `<div class="text-xs"><div class="font-semibold text-slate-700">${esc(userById(p.paidByUserId)?.name || p.payerName)}</div><div class="text-slate-500">${esc(paypalAccount(p))}</div><div class="text-slate-400">${esc(p.txId)} · ${fmtDate(p.paidAt)}</div></div>` : '<span class="text-slate-400">—</span>'; } },
+    { key: 'estado', label: 'Estado', options: Object.values(STATUS).map(s => s[0]), text: o => statusLabel(o.status), html: o => `<div class="flex flex-col items-start gap-1">${badge(o.status)}${statusDetail(o)}</div>` },
     { key: 'acc', label: '', noFilter: true, cls: 'text-right whitespace-nowrap', text: () => '', html: o => `
-      <button class="${o.confirmation ? btnS : btnP} !px-2 !py-1 text-xs" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
-      ${o.status === 'pagado'
-        ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPending('${o.id}')">Marcar pendiente</button>`
-        : `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPaidManual('${o.id}')">Marcar pagado</button>`}
+      ${o.status === 'pendiente' ? `<button class="${btnP} !px-2 !py-1 text-xs" onclick="App.approveOrder('${o.id}')">Aprobar</button>` : ''}
+      ${o.status === 'aprobado' || o.status === 'pago_comunicado' ? `<button class="${o.status === 'pago_comunicado' ? btnP : btnS} !px-2 !py-1 text-xs" onclick="App.validatePayment('${o.id}')">Validar pago</button>` : ''}
+      ${o.status === 'pagado' ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.validatePayment('${o.id}')">Cambiar fecha</button>
+        <button class="${btnS} !px-2 !py-1 text-xs" onclick="App.undoPayment('${o.id}')">Anular validación</button>` : ''}
       <button class="${btnD} !px-2 !py-1" title="Eliminar pedido" onclick="App.deleteOrder('${o.id}')">${ic.trash}</button>` },
   ];
   const ordersFilters = `<div class="flex flex-wrap items-center gap-2 mb-3">
-      <input class="${input} sm:!w-52 !py-1.5" placeholder="Buscar usuario o Tx…" value="${esc(f.q)}" oninput="App.filter('q',this.value)" id="f-q">
+      <input class="${input} sm:!w-52 !py-1.5" placeholder="Buscar usuario…" value="${esc(f.q)}" oninput="App.filter('q',this.value)" id="f-q">
       <select class="${input} !w-auto !py-1.5" onchange="App.filter('cat',this.value)"><option value="">Todos los tipos</option>${db.categories.map(c => `<option value="${c.id}" ${f.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
       <select class="${input} !w-auto !py-1.5" onchange="App.filter('model',this.value)"><option value="">Todos los modelos</option>${db.models.filter(m => inCat(m, f.cat)).map(m => `<option value="${m.id}" ${f.model === m.id ? 'selected' : ''}>${esc(m.name)}${m.deletedAt ? ' (eliminado)' : ''}</option>`).join('')}</select>
-      <select class="${input} !w-auto !py-1.5" onchange="App.filter('status',this.value)"><option value="">Todos los estados</option><option value="pagado" ${f.status === 'pagado' ? 'selected' : ''}>Pagado</option><option value="pendiente" ${f.status === 'pendiente' ? 'selected' : ''}>Pendiente</option></select>
+      <select class="${input} !w-auto !py-1.5" onchange="App.filter('status',this.value)"><option value="">Todos los estados</option>${Object.entries(STATUS).map(([k, [l]]) => `<option value="${k}" ${f.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       ${dateInputs('', f)}
     </div>`;
 
-  // 2. Pedidos por usuario (últimos 30 días y 6 meses)
+  // 2. Pedidos por usuario (últimos 30 días y 6 meses): solo cuentan los que tienen el pago confirmado
   const stats = db.users.filter(u => !u.pending).map(u => {
-    const os = db.orders.filter(o => o.userId === u.id), t = (o) => new Date(o.createdAt).getTime();
+    const os = db.orders.filter(o => o.userId === u.id && o.status === 'pagado'), t = (o) => new Date(o.createdAt).getTime();
     const m1 = os.filter(o => now - t(o) <= 30 * DAY), m6 = os.filter(o => now - t(o) <= 182 * DAY);
     const last = os.map(o => o.createdAt).sort().pop();
     return { u, m1: m1.length, m6: m6.length, amount6: m6.reduce((s, o) => s + orderTotal(o), 0), total: os.length, last };
@@ -905,34 +923,43 @@ function renderOrders() {
     { key: 'ultimo', label: 'Último pedido', text: s => s.last ? fmtDate(s.last) : 'nunca', sort: s => s.last || '', cls: 'whitespace-nowrap', html: s => s.last ? fmtDate(s.last) : '<span class="text-slate-400">nunca</span>' },
   ];
 
-  // 3. Registro de pagos
+  // 3. Registro de solicitudes y confirmación de pago (una fila por pedido)
   const pf = { from: f.pfrom, to: f.pto };
-  const pays = [...db.payments].filter(p => inRange(p.paidAt, pf.from, pf.to) && (!f.puser || p.paidByUserId === f.puser || p.userId === f.puser))
-    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
-  const payCols = [
-    { key: 'fecha', label: 'Fecha', text: p => fmtDate(p.paidAt), sort: p => p.paidAt || '', cls: 'whitespace-nowrap' },
-    { key: 'por', label: 'Pagado por', text: p => userById(p.paidByUserId)?.name || p.payerName, html: p => `<span class="font-semibold">${esc(userById(p.paidByUserId)?.name || p.payerName)}</span>` },
-    { key: 'paypal', label: 'Cuenta PayPal', text: p => paypalAccount(p) },
-    { key: 'pedido', label: 'Pedido', text: p => { const o = db.orders.find(x => x.id === p.orderId); return o ? `${o.modelName} ${itemsText(o.items)}` : 'pedido eliminado'; },
-      html: p => { const o = db.orders.find(x => x.id === p.orderId); return o ? `${esc(o.modelName)} ${sizeChips(o.items)}` : '<span class="text-slate-400">pedido eliminado</span>'; } },
-    { key: 'tx', label: 'Transacción', text: p => p.txId + (p.revoked ? ' anulado' : ''), html: p => `<span class="font-mono text-xs">${esc(p.txId)}</span>${p.revoked ? ' <span class="text-xs text-rose-500">(anulado)</span>' : ''}` },
-    { key: 'importe', label: 'Importe', text: p => money(p.amount), sort: p => p.amount || 0, cls: 'text-right whitespace-nowrap', html: p => `<b>${money(p.amount)}</b>` },
+  const regs = db.orders.filter(o => inRange(o.createdAt, pf.from, pf.to) && (!f.puser || o.userId === f.puser))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const pendingTag = '<span class="text-amber-600 font-semibold">Pendiente</span>';
+  const regCols = [
+    { key: 'fecha', label: 'Fecha', text: o => fmtDate(o.createdAt), sort: o => o.createdAt || '', cls: 'whitespace-nowrap' },
+    { key: 'usuario', label: 'Usuario', text: o => userById(o.userId)?.name || 'Usuario borrado', html: o => `<span class="font-semibold">${esc(userById(o.userId)?.name || 'Usuario borrado')}</span>` },
+    { key: 'aprob', label: 'Fecha aprobación solicitud', text: o => approvedAt(o) ? fmtDate(approvedAt(o)) : 'Pendiente', sort: o => approvedAt(o) || '', cls: 'whitespace-nowrap', html: o => approvedAt(o) ? fmtDate(approvedAt(o)) : pendingTag },
+    { key: 'pago', label: 'Fecha aprobación de pago', text: o => paidAt(o) ? fmtDate(paidAt(o)) : 'Pendiente', sort: o => paidAt(o) || '', cls: 'whitespace-nowrap', html: o => paidAt(o) ? fmtDate(paidAt(o)) : pendingTag },
+    { key: 'importe', label: 'Importe', text: o => money(orderTotal(o)), sort: o => orderTotal(o), cls: 'text-right whitespace-nowrap', html: o => `<b>${money(orderTotal(o))}</b>` },
   ];
-  const payUsers = db.users.filter(u => db.payments.some(p => p.paidByUserId === u.id || p.userId === u.id));
-  const payFilters = `<div class="flex flex-wrap items-center gap-2 mb-3">
-      <select class="${input} !w-auto !py-1.5" onchange="App.filter('puser',this.value)"><option value="">Todos los usuarios</option>${payUsers.map(u => `<option value="${u.id}" ${f.puser === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+  const regUsers = db.users.filter(u => db.orders.some(o => o.userId === u.id));
+  const regFilters = `<div class="flex flex-wrap items-center gap-2 mb-3">
+      <select class="${input} !w-auto !py-1.5" onchange="App.filter('puser',this.value)"><option value="">Todos los usuarios</option>${regUsers.map(u => `<option value="${u.id}" ${f.puser === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
       ${dateInputs('p', pf)}
-      <span class="text-xs text-slate-500 ml-auto">Total: <b>${money(pays.filter(p => !p.revoked).reduce((s, p) => s + (p.amount || 0), 0))}</b></span>
+      <span class="text-xs text-slate-500 ml-auto">Pagos confirmados: <b>${money(regs.filter(paidAt).reduce((s, o) => s + orderTotal(o), 0))}</b></span>
     </div>`;
 
   return `
     <div class="flex flex-wrap items-end gap-3 mb-5">
-      <div class="flex-1"><h1 class="text-2xl font-bold">Pedidos</h1><p class="text-sm text-slate-500">Pedidos, actividad de cada usuario y pagos recibidos.</p></div>
+      <div class="flex-1"><h1 class="text-2xl font-bold">Pedidos</h1><p class="text-sm text-slate-500">Solicitudes, aprobación y validación de pagos, y actividad de cada usuario.</p></div>
       <button class="${btnS}" onclick="App.exportOrders()">${ic.dl} Exportar CSV</button>
     </div>
     ${section('Pedidos activos', `${filteredOrders().length} pedidos`, ordersFilters + dataTable('orders', orderCols, filteredOrders(), 'No hay pedidos.', 1080))}
-    ${section('Pedidos por usuario', 'último mes y últimos 6 meses', dataTable('byuser', userCols, stats, 'No hay usuarios.', 640))}
-    ${section('Registro de pagos', `${pays.length} pagos`, payFilters + dataTable('payments', payCols, pays, 'Sin pagos todavía.', 820))}`;
+    ${section('Pedidos por usuario', 'solo con pago confirmado · último mes y últimos 6 meses', dataTable('byuser', userCols, stats, 'No hay usuarios.', 640))}
+    ${section('Registro de solicitudes y confirmación de pago', `${regs.length} solicitudes`, regFilters + dataTable('payments', regCols, regs, 'Sin solicitudes todavía.', 760))}`;
+}
+// Fechas de cada paso. Los pedidos anteriores al cambio (pagados con PayPal o marcados a mano) usan su fecha de pago.
+const approvedAt = (o) => o.approval?.at || (o.status !== 'pendiente' ? o.confirmation?.at || o.payment?.paidAt || o.updatedAt : null);
+const paidAt = (o) => o.status === 'pagado' ? o.delivery?.at || o.payment?.paidAt || o.updatedAt : null;
+// Línea pequeña bajo el estado en la tabla de pedidos.
+function statusDetail(o) {
+  const t = (s) => `<span class="text-[11px] text-slate-500">${s}</span>`;
+  if (o.status === 'pago_comunicado') return t(`Comunicado ${fmtDate(o.paymentNotice?.at)}`);
+  if (o.status === 'pagado' && deliveryDate(o)) return t(`Entrega: ${esc(deliveryDate(o))}`);
+  return '';
 }
 
 // ---------- CONTACTO (usuario) y MENSAJES (administrador) ----------
@@ -1051,9 +1078,19 @@ function inviteSheet() {
       <button class="${btnP} w-full !py-2.5">Enviar invitación</button>
       <div class="flex items-center gap-3 text-xs text-slate-400"><span class="flex-1 h-px bg-slate-200"></span>o<span class="flex-1 h-px bg-slate-200"></span></div>
       <button type="button" class="${btnS} w-full" onclick="App.shareInvite()">Compartir el enlace (WhatsApp, etc.)</button>
+      ${qrBlock(inviteUrl(), 'O que escanee este código con la cámara del móvil para crear su cuenta.')}
     </div></form>`;
 }
-const inviteUrl = () => location.origin + location.pathname + '?registro';
+const appUrl = () => location.origin + location.pathname;
+const inviteUrl = () => appUrl() + '?registro';
+// Código QR que lleva a la app (se genera en el navegador con qrcode-generator).
+function qrBlock(url, caption) {
+  if (typeof qrcode !== 'function') return '';
+  const q = qrcode(0, 'M'); q.addData(url); q.make();
+  return `<div class="flex items-center gap-4 rounded-2xl bg-cream-100/70 p-3">
+    <div class="w-28 h-28 shrink-0 rounded-xl bg-white p-1.5 ring-1 ring-slate-200 [&>svg]:w-full [&>svg]:h-full">${q.createSvgTag({ cellSize: 4, margin: 0, scalable: true, alt: 'Código QR de La Prima Mery' })}</div>
+    <p class="text-xs text-slate-600">${caption}<span class="block mt-1 text-slate-400 break-all">${esc(url)}</span></p></div>`;
+}
 // Avisos en la app (y copia en el buzón) del otro lado de la conversación.
 function notifyContact(t, first) {
   const last = t.messages.at(-1), preview = last.body.length > 140 ? last.body.slice(0, 140) + '…' : last.body;
@@ -1193,7 +1230,7 @@ function renderUsers() {
           return `<tr class="border-t border-slate-100">
             <td class="px-4 py-3"><div class="font-semibold">${esc(u.name)}</div>${u.needsPassword ? '<div class="text-xs text-amber-600 font-semibold">Sin contraseña aún</div>' : ''}</td><td class="px-3">@${esc(u.username)}</td><td class="px-3 text-slate-500">${esc(u.email)}</td>
             <td class="px-3"><span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-pitch-50 text-pitch-700'}">${u.role}</span></td>
-            <td class="px-3 text-xs">${os.length} (${os.filter(o => o.status === 'pagado').length} pagados)</td>
+            <td class="px-3 text-xs">${os.length} (${os.filter(o => o.status === 'pagado').length} con pago confirmado)</td>
             <td class="px-3">${u.active ? '<span class="text-xs text-pitch-700 font-semibold">Activo</span>' : '<span class="text-xs text-slate-400 font-semibold">Desactivado</span>'}</td>
             <td class="px-4 py-2 text-right whitespace-nowrap">
               <button class="${btnS} !px-2 !py-1" onclick="App.editUser('${u.id}')" title="Editar">${ic.edit}</button>
@@ -1223,49 +1260,17 @@ function userForm(u) {
 }
 
 // ---------- ADMIN: ajustes ----------
-// Bloque de PayPal en Ajustes. El Secret se guarda en una tabla protegida (app_secrets) que la app no puede leer:
-// aquí solo se ve si está guardado y sus últimos 4 caracteres.
-function paypalSettings() {
-  const s = db.settings, sec = ui.paypalSecret, live = s.paypalEnv !== 'sandbox';
-  if (sec === undefined) { ui.paypalSecret = null; App.loadPaypalStatus(); }
-  const ready = !!(s.paypalClientId && sec?.hint);
-  const step = (n, html) => `<li class="flex gap-3"><span class="grid place-items-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">${n}</span><span>${html}</span></li>`;
-  const link = (href, text) => `<a href="${href}" target="_blank" rel="noopener" class="font-semibold text-brand-700 underline">${text}</a>`;
-  return `<form class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3 lg:row-span-2" onsubmit="event.preventDefault();App.savePaypal(this)">
-    <div class="flex items-center gap-2"><h2 class="font-semibold flex-1">Pagos con ${paypalLogo}</h2>
-      ${ready ? `<span class="rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-100 px-2.5 py-0.5 text-xs font-semibold">✓ Activo · ${live ? 'cobros reales' : 'modo pruebas'}</span>`
-              : '<span class="rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2.5 py-0.5 text-xs font-semibold">Sin configurar</span>'}</div>
-    <div class="grid grid-cols-2 gap-2">
-      <label class="flex items-center gap-2 rounded-xl ring-1 ${live ? 'ring-brand-600 bg-brand-50' : 'ring-slate-200'} px-3 py-2 text-sm cursor-pointer"><input type="radio" name="paypalEnv" value="live" class="accent-brand-600" ${live ? 'checked' : ''}> <span><b>Real</b><span class="block text-xs text-slate-500">Cobros de verdad</span></span></label>
-      <label class="flex items-center gap-2 rounded-xl ring-1 ${!live ? 'ring-brand-600 bg-brand-50' : 'ring-slate-200'} px-3 py-2 text-sm cursor-pointer"><input type="radio" name="paypalEnv" value="sandbox" class="accent-brand-600" ${!live ? 'checked' : ''}> <span><b>Pruebas</b><span class="block text-xs text-slate-500">Sandbox, sin dinero real</span></span></label>
-    </div>
-    <div><label class="text-xs font-semibold text-slate-600">Client ID</label><input name="paypalClientId" autocomplete="off" spellcheck="false" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId || '')}" placeholder="Empieza por A…"></div>
-    <div><label class="text-xs font-semibold text-slate-600">Secret</label><input name="paypalSecret" type="password" autocomplete="new-password" spellcheck="false" class="${input} mt-1 font-mono text-xs" placeholder="${sec?.hint ? `Guardado (termina en ${esc(sec.hint.slice(1))}). Déjalo vacío para no cambiarlo` : 'Pega aquí el Secret'}">
-      <p class="text-xs text-slate-400 mt-1">El Secret se guarda protegido: nadie puede verlo desde la app, solo lo usa el servidor al cobrar.</p></div>
-    <div class="flex flex-wrap gap-2"><button class="${btnP}">Guardar datos de PayPal</button><button type="button" class="${btnS}" onclick="App.testPaypal(this)">Probar conexión</button></div>
-    <details class="rounded-xl bg-cream-100/60 p-3" ${ready ? '' : 'open'}>
-      <summary class="cursor-pointer text-sm font-semibold text-brand-700">Cómo conseguir el Client ID y el Secret</summary>
-      <ol class="mt-3 space-y-2.5 text-sm text-slate-700">
-        ${step(1, `Necesitas una cuenta <b>PayPal Business</b> (de empresa), que es donde llegará el dinero. Créala o convierte tu cuenta en ${link('https://www.paypal.com/es/business', 'paypal.com/es/business')}.`)}
-        ${step(2, `Entra con esa cuenta en ${link('https://developer.paypal.com/dashboard/applications/live', 'developer.paypal.com → Apps &amp; Credentials')}.`)}
-        ${step(3, `Arriba, asegúrate de que está seleccionado <b>Live</b> (para pruebas, <b>Sandbox</b>). Pulsa <b>Create App</b>, ponle de nombre «La Prima Mery» y créala.`)}
-        ${step(4, `Copia el <b>Client ID</b> y el <b>Secret</b> (pulsa «Show» para verlo) y pégalos aquí arriba. Elige <b>Real</b> si son de Live o <b>Pruebas</b> si son de Sandbox.`)}
-        ${step(5, `Pulsa <b>Guardar datos de PayPal</b> y después <b>Probar conexión</b>. Si sale «Conexión correcta», los usuarios ya pueden pagar con PayPal o con tarjeta.`)}
-      </ol>
-    </details>
-  </form>`;
-}
 function renderSettings() {
   const s = db.settings;
   return `
     <h1 class="text-2xl font-bold mb-5">Ajustes</h1>
     <div class="grid lg:grid-cols-2 gap-5">
       <form class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" onsubmit="event.preventDefault();App.saveSettings(this)">
-        <h2 class="font-semibold">Pedidos y pagos</h2>
+        <h2 class="font-semibold">Pedidos</h2>
         <div><label class="text-xs font-semibold text-slate-600">Máximo de unidades por pedido (por modelo)</label><input name="maxUnits" type="number" min="1" step="1" class="${input} mt-1" value="${s.maxUnits || ''}" placeholder="Sin límite">
           <p class="text-xs text-slate-400 mt-1">Déjalo vacío para no poner límite.</p></div>
         <div><label class="text-xs font-semibold text-slate-600">Moneda</label><select name="currency" class="${input} mt-1">${['EUR', 'USD', 'GBP'].map(c => `<option ${s.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-        <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-2"><legend class="text-xs font-semibold text-slate-600 px-1">Avisos a los administradores (nuevo pedido, cambio y pago)</legend>
+        <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-2"><legend class="text-xs font-semibold text-slate-600 px-1">Avisos a los administradores (solicitud nueva, cambio y aviso de pago)</legend>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertNotif" class="accent-brand-600 w-4 h-4" ${s.alertNotif ? 'checked' : ''}> Notificación</label>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="alertEmail" class="accent-brand-600 w-4 h-4" ${s.alertEmail ? 'checked' : ''}> Email a la dirección de cada administrador</label></fieldset>
         <fieldset class="rounded-xl ring-1 ring-slate-200 p-3 space-y-1"><legend class="text-xs font-semibold text-slate-600 px-1">Recuperar contraseña</legend>
@@ -1274,7 +1279,6 @@ function renderSettings() {
           <p class="text-xs text-slate-400">El SMS necesita un proveedor (Twilio, Vonage…) configurado en Supabase → Authentication → Sign In / Providers → Phone. Actívalo aquí solo cuando esté listo.</p></fieldset>
         <button class="${btnP}">Guardar ajustes</button>
       </form>
-      ${paypalSettings()}
       <div class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3">
         <h2 class="font-semibold">Datos en la nube</h2>
         <p class="text-sm text-slate-500">Pedidos, usuarios, modelos y fotos se guardan en Supabase y se sincronizan al momento entre todos los dispositivos. Los cambios de otros usuarios aparecen sin recargar.</p>
@@ -1332,46 +1336,6 @@ function enhanceImage(file, enhance) {
 }
 
 // =========================================================================
-// PAYPAL
-// =========================================================================
-let paypalLoadedFor = null;
-function loadPaypalSdk(clientId, currency) {
-  const key = clientId + currency;
-  if (paypalLoadedFor === key && window.paypal) return Promise.resolve();
-  document.getElementById('paypal-sdk')?.remove();
-  delete window.paypal;
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.id = 'paypal-sdk';
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${currency}&intent=capture&components=buttons&enable-funding=card`;
-    s.onload = () => { paypalLoadedFor = key; resolve(); };
-    s.onerror = () => reject(new Error('No se pudo cargar el SDK de PayPal'));
-    document.head.appendChild(s);
-  });
-}
-function registerPayment(orderId, info) {
-  const o = db.orders.find(x => x.id === orderId), u = me();
-  o.payment = { txId: info.txId, method: info.method, payerEmail: info.payerEmail || u.email, payerName: info.payerName || u.name, payerId: info.payerId || null, paidByUserId: u.id, amount: orderTotal(o), paidAt: new Date().toISOString() };
-  o.status = 'pagado'; o.updatedAt = o.payment.paidAt;
-  db.payments.push({ id: uid('p'), orderId: o.id, userId: o.userId, ...o.payment });
-  alertAdmins('pago', o, `Pago recibido: ${o.modelName}`, `${u.name} ha pagado su pedido de ${o.modelName} (${itemsText(o.items)}).
-Importe: ${money(o.payment.amount)} · ${o.payment.method}
-Cuenta PayPal: ${o.payment.payerEmail} · Transacción ${o.payment.txId}`);
-  save();
-}
-function paySuccess(o, txId) {
-  document.getElementById('pp-body').innerHTML = `
-    <div class="text-center py-6">
-      <div class="mx-auto w-14 h-14 rounded-full bg-pitch-100 text-pitch-600 grid place-items-center text-3xl">✓</div>
-      <h3 class="font-bold text-lg mt-3">Pago completado</h3>
-      <p class="text-sm text-slate-500 mt-1">${money(orderTotal(o))} · Transacción <span class="font-mono">${esc(txId)}</span></p>
-      <p class="text-xs text-slate-400 mt-1">El administrador ya ve tu pedido como <b>Pagado</b>.</p>
-      <button class="${btnP} mt-5" onclick="App.closeModal()">Hecho</button>
-    </div>`;
-  ui.sel = {}; render();
-}
-
-// =========================================================================
 // AVISOS: notificaciones en la app + correos
 // Sin servidor no se pueden enviar correos ni avisos a otro dispositivo: cada aviso se guarda en el buzón
 // del destinatario (lo ve al entrar) y, si está usando la app, se muestra también como notificación del sistema.
@@ -1399,9 +1363,6 @@ function alertAdmins(kind, order, subject, body) {
     if (db.settings.alertEmail) sendMail(a, `[${APP_NAME}] ${subject}`, body + '\n\nRevisa el pedido en la pestaña Pedidos.', order.id);
   });
 }
-function confirmText(o, eta) {
-  return `Tu pedido de ${o.modelName} (${itemsText(o.items)}) está confirmado.` + (eta ? `\nTiempo estimado de entrega: ${eta}.` : '') + '\nGracias por tu pedido.';
-}
 
 function inboxSheet() {
   const tab = ui.inboxTab || 'notif';
@@ -1427,32 +1388,38 @@ function inboxSheet() {
     </div>`;
 }
 
-function confirmForm(o) {
-  const u = userById(o.userId), c = o.confirmation, eta = c?.eta || '';
-  return `
-    <form onsubmit="event.preventDefault();App.sendConfirmation('${o.id}',this)">
-      <div class="flex items-center px-5 py-4 border-b border-slate-100"><h2 class="font-bold text-lg flex-1">Confirmar pedido</h2><button type="button" onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
-      <div class="p-5 space-y-4">
-        <div class="rounded-xl bg-slate-50 px-3 py-2.5 text-sm"><b>${esc(u?.name)}</b> · ${esc(o.modelName)}<div class="mt-1">${sizeChips(o.items)} ${badge(o.status)}</div></div>
-        <div>
-          <label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="withEta" class="accent-brand-600 w-4 h-4" ${eta ? 'checked' : ''} onchange="this.form.eta.disabled=!this.checked;App.refreshConfirmText(this.form,'${o.id}')"> Indicar tiempo estimado de entrega</label>
-          <input name="eta" list="eta-opts" class="${input} mt-2" placeholder="p. ej. 2-3 semanas" value="${esc(eta)}" ${eta ? '' : 'disabled'} oninput="App.refreshConfirmText(this.form,'${o.id}')">
-          <datalist id="eta-opts"><option value="1 semana"><option value="2-3 semanas"><option value="1 mes"><option value="4-6 semanas"></datalist>
-        </div>
-        <div><label class="text-xs font-semibold text-slate-600">Mensaje para ${esc(u?.name.split(' ')[0])}</label><textarea name="message" rows="4" class="${input} mt-1" oninput="this.dataset.edited=1">${esc(c?.message || confirmText(o, eta))}</textarea></div>
-        <div class="grid sm:grid-cols-2 gap-2">
-          <label class="flex items-center gap-2 rounded-xl ring-1 ring-slate-200 px-3 py-2.5 text-sm"><input type="checkbox" name="viaNotif" class="accent-brand-600 w-4 h-4" checked> Enviar notificación</label>
-          <label class="flex items-center gap-2 rounded-xl ring-1 ring-slate-200 px-3 py-2.5 text-sm"><input type="checkbox" name="viaEmail" class="accent-brand-600 w-4 h-4" checked> Enviar email a ${esc(u?.email)}</label>
-        </div>
-        ${c ? `<p class="text-xs text-slate-500">Ya confirmado el ${fmtDate(c.at)}. Volver a enviarlo actualiza el mensaje y el plazo.</p>` : ''}
-      </div>
-      <div class="flex flex-wrap justify-end gap-2 px-5 py-4 border-t border-slate-100">
-        <button type="button" class="${btnS}" onclick="App.mailtoConfirmation('${o.id}',this.form)" title="Abre tu programa de correo con el mensaje preparado">Abrir en mi correo</button>
-        <button class="${btnP}">${c ? 'Actualizar confirmación' : 'Confirmar pedido'}</button>
-      </div>
-    </form>`;
+// Aprobar la solicitud: el texto con las instrucciones de pago va siempre; el admin puede añadir algo más.
+const sendChecks = (u) => `<div class="grid sm:grid-cols-2 gap-2">
+    <label class="flex items-center gap-2 rounded-xl ring-1 ring-slate-200 px-3 py-2.5 text-sm"><input type="checkbox" name="viaNotif" class="accent-brand-600 w-4 h-4" checked> Enviar notificación</label>
+    <label class="flex items-center gap-2 rounded-xl ring-1 ring-slate-200 px-3 py-2.5 text-sm"><input type="checkbox" name="viaEmail" class="accent-brand-600 w-4 h-4" checked> Enviar email a ${esc(u?.email)}</label>
+  </div>`;
+const orderSummary = (o) => `<div class="rounded-xl bg-slate-50 px-3 py-2.5 text-sm"><b>${esc(userById(o.userId)?.name)}</b> · ${esc(o.modelName)} · <b>${money(orderTotal(o))}</b><div class="mt-1">${sizeChips(o.items)} ${badge(o.status)}</div></div>`;
+function approveForm(o) {
+  const u = userById(o.userId);
+  return `<form onsubmit="event.preventDefault();App.sendApproval('${o.id}',this)">${sheetHead('Aprobar solicitud')}
+    <div class="p-5 space-y-4">
+      ${orderSummary(o)}
+      <div><div class="text-xs font-semibold text-slate-600 mb-1">Texto que recibirá ${esc(u?.name.split(' ')[0])} (siempre se incluye)</div>
+        <div class="rounded-xl bg-sky-50 ring-1 ring-sky-100 px-3 py-2.5 text-sm text-slate-700">${esc(APPROVAL_TEXT)}<div class="mt-2 font-semibold">Importe: ${money(orderTotal(o))}</div></div></div>
+      <div><label class="text-xs font-semibold text-slate-600">Mensaje adicional (opcional)</label><textarea name="message" rows="3" maxlength="1000" class="${input} mt-1" placeholder="p. ej. Gracias por tu pedido"></textarea></div>
+      ${sendChecks(u)}
+      <button class="${btnP} w-full !py-2.5">Aprobar y enviar</button>
+    </div></form>`;
 }
-const confirmChip = (o) => o.confirmation ? `<span class="inline-flex items-center whitespace-nowrap rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-100 px-2 py-0.5 text-xs font-semibold">✓ Confirmado${o.confirmation.eta ? ` · ${esc(o.confirmation.eta)}` : ''}</span>` : '';
+// Validar el pago: el admin indica la fecha en que el usuario recibirá el producto.
+function deliveryForm(o) {
+  const u = userById(o.userId), d = o.delivery || {}, today = new Date().toISOString().slice(0, 10);
+  return `<form onsubmit="event.preventDefault();App.sendPaymentOk('${o.id}',this)">${sheetHead(o.status === 'pagado' ? 'Cambiar fecha de entrega' : 'Validar pago')}
+    <div class="p-5 space-y-4">
+      ${orderSummary(o)}
+      ${o.status === 'aprobado' ? '<p class="text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2">El usuario todavía no ha comunicado el pago. Valídalo solo si ya has comprobado que te ha llegado.</p>' : ''}
+      ${o.paymentNotice?.at ? `<p class="text-xs text-slate-500">Pago comunicado por el usuario el ${fmtDate(o.paymentNotice.at)}.</p>` : ''}
+      <div><label class="text-xs font-semibold text-slate-600">Fecha en que recibirá el producto</label><input name="date" type="date" required min="${today}" class="${input} mt-1" value="${esc(d.date || '')}"></div>
+      <div><label class="text-xs font-semibold text-slate-600">Mensaje adicional (opcional)</label><textarea name="message" rows="3" maxlength="1000" class="${input} mt-1">${esc(d.message || '')}</textarea></div>
+      ${sendChecks(u)}
+      <button class="${btnP} w-full !py-2.5">${o.status === 'pagado' ? 'Guardar y avisar' : 'Confirmar pago y avisar'}</button>
+    </div></form>`;
+}
 const bellBtn = () => { const n = unread(); return `<button class="relative grid place-items-center w-10 h-10 rounded-xl hover:bg-slate-100 text-slate-600" onclick="App.openInbox()" aria-label="Buzón${n ? `: ${n} sin leer` : ''}">
   <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>
   ${n ? `<span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] grid place-items-center rounded-full bg-rose-500 text-white text-[10px] font-bold px-1">${n > 9 ? '9+' : n}</span>` : ''}</button>`; };
@@ -1486,6 +1453,7 @@ function installSheet() {
         <div><h2 class="font-bold text-lg leading-tight">Instala ${APP_NAME}</h2><p class="text-sm text-slate-500">Tenla en ${where} como una app más: acceso directo, pantalla completa y carga rápida.</p></div>
       </div>
       ${how}
+      <div class="mt-4">${qrBlock(appUrl(), isMobile() ? 'Para instalarla en otro dispositivo, escanea este código con su cámara.' : 'Para tenerla también en el móvil, escanea este código con su cámara y sigue los pasos.')}</div>
       <button class="${btnS} w-full mt-3" onclick="App.closeModal()">Ahora no</button>
       <p class="text-xs text-slate-400 mt-3 text-center">Puedes instalarla más tarde desde ${isMobile() ? 'tu perfil (arriba a la derecha)' : 'el botón «Instalar app» de la cabecera'}.</p>
     </div>`;
@@ -1774,31 +1742,42 @@ const App = {
     if (p === 'granted') sysNotify(APP_NAME, 'Avisos activados: te avisaremos de las novedades de tus pedidos.');
     App.openInbox();
   },
-  confirmOrder(oid) { openModal(confirmForm(db.orders.find(o => o.id === oid))); },
-  refreshConfirmText(form, oid) { // mientras el admin no edite el mensaje, se rehace con el plazo indicado
-    if (form.message.dataset.edited) return;
-    form.message.value = confirmText(db.orders.find(o => o.id === oid), form.withEta.checked ? form.eta.value.trim() : '');
-  },
-  async sendConfirmation(oid, form) {
+  approveOrder(oid) { openModal(approveForm(db.orders.find(o => o.id === oid))); },
+  validatePayment(oid) { openModal(deliveryForm(db.orders.find(o => o.id === oid))); },
+  async sendApproval(oid, form) {
     const o = db.orders.find(x => x.id === oid), u = userById(o.userId);
-    const eta = form.withEta.checked ? form.eta.value.trim() : '';
-    if (form.withEta.checked && !eta) return toast('Indica el tiempo estimado o desmarca la opción', 'error');
     const message = form.message.value.trim(), viaNotif = form.viaNotif.checked, viaEmail = form.viaEmail.checked;
-    o.confirmation = { at: new Date().toISOString(), byUserId: ui.sessionId, eta: eta || null, message, viaNotif, viaEmail };
-    const title = `Pedido confirmado: ${o.modelName}`;
-    if (u && viaNotif) sendNotif(u, title, eta ? `Entrega estimada: ${eta}` : 'El administrador ha confirmado tu pedido.', o.id);
-    if (u && viaEmail) sendMail(u, `[${APP_NAME}] ${title}`, message + (eta ? `\nTiempo estimado de entrega: ${eta}` : ''), o.id);
+    o.status = 'aprobado'; o.updatedAt = new Date().toISOString();
+    o.approval = { at: o.updatedAt, byUserId: ui.sessionId, message };
+    if (u && viaNotif) sendNotif(u, `Solicitud aprobada: ${o.modelName}`, `Importe: ${money(orderTotal(o))}. Haz el depósito por PayPal a ${PAYPAL_ACCOUNT} y después solicita la confirmación del pago en Mis pedidos.`, o.id);
+    if (u) sendMail(u, `[${APP_NAME}] Solicitud aprobada: ${o.modelName}`, `${APPROVAL_TEXT}\n\nPedido: ${o.modelName} (${itemsText(o.items)})\nImporte: ${money(orderTotal(o))}${message ? '\n\n' + message : ''}`, o.id);
     save(); closeModal(); render();
-    if (!viaEmail) return toast(viaNotif ? `Confirmación enviada a ${u?.name}` : 'Pedido marcado como confirmado (sin avisar)');
+    if (!viaEmail) return toast(`Solicitud aprobada${viaNotif ? ` y avisado ${u?.name}` : ''}`);
+    await syncChain;
+    const r = await callMail({ type: 'approve', orderId: oid });
+    toast(mailNote(r, `Solicitud aprobada. Aviso enviado a ${u?.name}`), r.ok || r.notConfigured ? 'ok' : 'error');
+  },
+  async sendPaymentOk(oid, form) {
+    const o = db.orders.find(x => x.id === oid), u = userById(o.userId), date = form.date.value;
+    if (!date) return toast('Indica la fecha de entrega', 'error');
+    const message = form.message.value.trim(), viaNotif = form.viaNotif.checked, viaEmail = form.viaEmail.checked;
+    const now = new Date().toISOString();
+    o.status = 'pagado'; o.updatedAt = now;
+    o.delivery = { at: o.delivery?.at || now, changedAt: now, byUserId: ui.sessionId, date, message };
+    const title = `Pago confirmado: ${o.modelName}`, when = fmtDay(date);
+    if (u && viaNotif) sendNotif(u, title, `El pago se ha realizado correctamente. Recibirás el producto el ${when}.`, o.id);
+    if (u) sendMail(u, `[${APP_NAME}] ${title}`, `El pago de tu pedido de ${o.modelName} (${itemsText(o.items)}) se ha realizado correctamente.\nRecibirás el producto el ${when}.${message ? '\n\n' + message : ''}`, o.id);
+    save(); closeModal(); render();
+    if (!viaEmail) return toast(`Pago confirmado${viaNotif ? ` y avisado ${u?.name}` : ''}`);
     await syncChain;
     const r = await callMail({ type: 'confirm', orderId: oid });
-    toast(mailNote(r, `Confirmación enviada a ${u?.name} por ${viaNotif ? 'notificación y ' : ''}email`), r.ok || r.notConfigured ? 'ok' : 'error');
+    toast(mailNote(r, `Pago confirmado. Aviso enviado a ${u?.name}`), r.ok || r.notConfigured ? 'ok' : 'error');
   },
-  mailtoConfirmation(oid, form) {
-    const o = db.orders.find(x => x.id === oid), u = userById(o.userId);
-    const subject = `[${APP_NAME}] Pedido confirmado: ${o.modelName}`;
-    const body = `Hola ${u.name.split(' ')[0]}:\n\n${form.message.value.trim()}\n\n— ${APP_NAME}`;
-    location.href = `mailto:${encodeURIComponent(u.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  undoPayment(oid) {
+    const o = db.orders.find(x => x.id === oid);
+    if (!confirm('¿Anular la validación del pago? El pedido vuelve a estar pendiente de validar (el usuario no recibe aviso).')) return;
+    o.status = o.paymentNotice ? 'pago_comunicado' : 'aprobado'; o.delivery = null; o.updatedAt = new Date().toISOString();
+    save(); render(); toast('Validación anulada', 'info');
   },
   async logout() {
     if (rtChannel) { sb.removeChannel(rtChannel); rtChannel = null; }
@@ -1822,71 +1801,36 @@ const App = {
     const m = modelById(mid), s = selFor(m), items = cleanItems(s.items);
     if (!units(items)) return toast('Selecciona al menos una talla', 'error');
     let o = myOrderFor(mid);
-    if (o?.status === 'pagado') return toast('Este pedido ya está pagado y no se puede modificar', 'error');
+    if (o && o.status !== 'pendiente') return toast('Tu solicitud ya está aprobada y no se puede modificar', 'error');
     const now = new Date().toISOString();
-    if (o) { o.items = items; o.unitPrice = m.price; o.offer = offerSnapshot(m); o.modelName = m.name; o.updatedAt = now; o.confirmation = null; toast('Pedido actualizado');
+    if (o) { o.items = items; o.unitPrice = m.price; o.offer = offerSnapshot(m); o.modelName = m.name; o.updatedAt = now; toast('Solicitud actualizada');
       alertAdmins('pedido', o, `Pedido modificado: ${m.name}`, `${me().name} ha modificado su pedido de ${m.name}.
-Ahora: ${itemsText(items)} · ${money(orderTotal(o))} · pendiente de pago.`); }
-    else { db.orders.push({ id: uid('o'), userId: ui.sessionId, modelId: mid, modelName: m.name, unitPrice: m.price, offer: offerSnapshot(m), items, status: 'pendiente', createdAt: now, updatedAt: now, payment: null }); toast('¡Solicitud enviada al administrador!');
+Ahora: ${itemsText(items)} · ${money(orderTotal(o))} · pendiente de aprobar.`); }
+    else { db.orders.push({ id: uid('o'), userId: ui.sessionId, modelId: mid, modelName: m.name, unitPrice: m.price, offer: offerSnapshot(m), items, status: 'pendiente', createdAt: now, updatedAt: now }); toast('¡Solicitud enviada al administrador!');
       const no = db.orders.at(-1);
-      alertAdmins('pedido', no, `Nuevo pedido: ${m.name}`, `${me().name} ha solicitado ${m.name} (${catName(catOf(m))}).
-Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
+      alertAdmins('pedido', no, `Nueva solicitud: ${m.name}`, `${me().name} ha solicitado ${m.name} (${catName(catOf(m))}).
+Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de aprobar.`);
       save(); render();
-      syncChain.then(() => callMail({ type: 'order', orderId: no.id })); // email «Hemos recibido tu pedido»
+      syncChain.then(() => callMail({ type: 'order', orderId: no.id })); // email al usuario, a los admins y a La Prima Mery
       return; }
     save(); render();
   },
   cancelOrder(oid) {
     const o = db.orders.find(x => x.id === oid);
-    if (!o || o.status === 'pagado' || !confirm('¿Cancelar este pedido?')) return;
+    if (!o || o.status !== 'pendiente' || !confirm('¿Cancelar esta solicitud?')) return;
     db.orders = db.orders.filter(x => x.id !== oid); delete ui.sel[o.modelId]; save(); render(); toast('Pedido cancelado', 'info');
   },
-  // Pago real: el servidor (Edge Function paypal) crea el cobro con el importe del pedido y lo confirma con PayPal.
-  async pay(oid) {
-    const o = db.orders.find(x => x.id === oid), m = modelById(o.modelId);
-    const cid = (db.settings.paypalClientId || '').trim();
-    openModal(`
-      <div class="flex items-center px-5 py-4 border-b border-slate-100"><div class="text-2xl flex-1">${paypalLogo}</div><button onclick="App.closeModal()" class="text-slate-400" aria-label="Cerrar">${ic.x}</button></div>
-      <div class="p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]" id="pp-body">
-        <div class="flex gap-3 items-center bg-slate-50 rounded-2xl p-3 mb-4">
-          <div class="w-12 h-14 rounded-lg overflow-hidden bg-white">${imgTag(m?.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}</div>
-          <div class="flex-1"><div class="font-semibold text-sm">${esc(o.modelName)}</div><div class="mt-0.5">${sizeChips(o.items)}</div>${o.offer ? `<div class="text-xs text-brand-700 font-semibold mt-0.5">🏷 ${offerShort(o.offer)}</div>` : ''}</div>
-          <div class="text-right"><div class="text-xs text-slate-500">Total</div><div class="font-bold text-lg">${money(orderTotal(o))}</div></div>
-        </div>
-        ${cid ? `<div id="pp-buttons" class="min-h-[50px]"><p class="text-sm text-slate-500 text-center py-4">Cargando PayPal…</p></div>
-                 <p class="text-xs text-slate-400 text-center mt-2">Puedes pagar con tu cuenta PayPal o con tarjeta. El pago es seguro y lo procesa PayPal.</p>`
-              : `<p class="text-sm text-slate-600 text-center py-4">El pago online todavía no está activado. Si quieres pagar ya, escríbenos desde la pestaña <b>Contacto</b>.</p>`}
-      </div>`);
-    if (!cid) return;
-    const fail = (msg) => { const el = document.getElementById('pp-buttons'); if (el) el.innerHTML = `<p class="text-sm text-rose-600 text-center py-4">${esc(msg)}</p>`; };
-    const callPaypal = async (payload) => {
-      const { data, error } = await sb.functions.invoke('paypal', { body: payload });
-      if (!error) return data;
-      let detail = null;
-      try { detail = await error.context?.json(); } catch {}
-      throw new Error(detail?.error || error.message);
-    };
-    try {
-      await loadPaypalSdk(cid, db.settings.currency || 'EUR');
-      document.getElementById('pp-buttons').innerHTML = '';
-      window.paypal.Buttons({
-        style: { layout: 'vertical', shape: 'pill', label: 'pay' },
-        createOrder: async () => (await callPaypal({ action: 'create', orderId: o.id })).id,
-        onApprove: async (data) => {
-          const box = document.getElementById('pp-buttons');
-          if (box) box.innerHTML = '<p class="text-sm text-slate-500 text-center py-4">Confirmando el pago…</p>';
-          try {
-            const r = await callPaypal({ action: 'capture', orderId: o.id, paypalOrderId: data.orderID });
-            await fetchAll();
-            paySuccess(db.orders.find(x => x.id === o.id) || o, r.payment?.txId || data.orderID);
-          } catch (e) { fail(e.message); }
-        },
-        onCancel: () => toast('Pago cancelado', 'info'),
-        onError: (err) => { console.error(err); fail(err?.message || 'PayPal no ha podido completar el pago. Inténtalo de nuevo.'); },
-      }).render('#pp-buttons');
-    } catch (e) {
-      fail(e.message + '. Comprueba el Client ID de PayPal en Ajustes.');
-    }
+  async requestPaymentCheck(oid) {
+    const o = db.orders.find(x => x.id === oid);
+    if (!o || o.status !== 'aprobado') return;
+    if (!confirm(`¿Ya has hecho el depósito de ${money(orderTotal(o))} por PayPal a ${PAYPAL_ACCOUNT}?\n\nSe avisará a La Prima Mery para que compruebe el pago.`)) return;
+    const r = await callMail({ type: 'paid-notice', orderId: oid });
+    // el servidor cambia el estado aunque falle el email (lo indica con mailError)
+    if (!r.ok) return toast(r.notConfigured ? 'El aviso de pago aún no está disponible: el correo de La Prima Mery no está configurado.' : r.error || 'No se pudo enviar el aviso. Inténtalo de nuevo.', 'error');
+    alertAdmins('pago', o, `Pago comunicado: ${o.modelName}`, `${me().name} dice que ya ha hecho el depósito de ${money(orderTotal(o))} por PayPal a ${PAYPAL_ACCOUNT} (${o.modelName}: ${itemsText(o.items)}).
+Comprueba el pago y valídalo en la pestaña Pedidos indicando la fecha de entrega.`);
+    save(); await syncChain; await fetchAll(); render();
+    toast(r.data?.mailError ? 'Aviso enviado en la app, pero falló el email a La Prima Mery.' : 'Aviso enviado. Te avisaremos cuando comprobemos el pago.', r.data?.mailError ? 'error' : 'ok');
   },
 
   // --- admin: panel / pedidos ---
@@ -1910,20 +1854,6 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     st.page = 0; render();
   },
   tclear(key) { tableState(key).f = {}; tableState(key).page = 0; render(); },
-  markPaidManual(oid) {
-    const o = db.orders.find(x => x.id === oid), u = userById(o.userId), admin = me();
-    if (!confirm(`¿Marcar como pagado el pedido de ${u?.name}? (p. ej. pago en efectivo)`)) return;
-    o.payment = { txId: 'MANUAL-' + Date.now().toString(36).toUpperCase(), method: `Manual (registrado por ${admin.name})`, payerEmail: u?.email || '', payerName: u?.name || '', paidByUserId: o.userId, amount: orderTotal(o), paidAt: new Date().toISOString() };
-    o.status = 'pagado';
-    db.payments.push({ id: uid('p'), orderId: o.id, userId: o.userId, ...o.payment });
-    save(); render(); toast('Pedido marcado como pagado');
-  },
-  markPending(oid) {
-    const o = db.orders.find(x => x.id === oid);
-    if (!confirm('¿Volver a dejar este pedido como pendiente? El pago quedará anulado en el registro.')) return;
-    db.payments.filter(p => p.orderId === oid && !p.revoked).forEach(p => p.revoked = true);
-    o.status = 'pendiente'; o.payment = null; save(); render(); toast('Pedido marcado como pendiente', 'info');
-  },
   deleteOrder(oid) {
     if (!confirm('¿Eliminar este pedido definitivamente?')) return;
     db.orders = db.orders.filter(x => x.id !== oid); save(); render(); toast('Pedido eliminado', 'info');
@@ -1938,10 +1868,10 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     downloadCsv(`lote-fabricacion${ui.panelPaidOnly ? '-pagados' : ''}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   },
   exportOrders() {
-    const rows = [['Fecha', 'Usuario', 'Email', 'Tipo', 'Modelo', ...SIZES, 'Unidades', 'Importe', 'Estado', 'Pagado por', 'Cuenta PayPal', 'Método', 'Transacción', 'Fecha pago']];
+    const rows = [['Fecha', 'Usuario', 'Email', 'Tipo', 'Modelo', ...SIZES, 'Unidades', 'Importe', 'Estado', 'Fecha aprobación solicitud', 'Fecha aprobación de pago', 'Fecha de entrega']];
     filteredOrders().forEach(o => {
-      const u = userById(o.userId), p = o.payment;
-      rows.push([fmtDate(o.createdAt), u?.name, u?.email, catName(catOf(modelById(o.modelId))), o.modelName, ...SIZES.map(s => o.items[s] || 0), units(o.items), orderTotal(o).toFixed(2).replace('.', ','), o.status, p ? (userById(p.paidByUserId)?.name || p.payerName) : '', p?.payerEmail, p?.method, p?.txId, p ? fmtDate(p.paidAt) : '']);
+      const u = userById(o.userId), a = approvedAt(o), p = paidAt(o);
+      rows.push([fmtDate(o.createdAt), u?.name, u?.email, catName(catOf(modelById(o.modelId))), o.modelName, ...SIZES.map(s => o.items[s] || 0), units(o.items), orderTotal(o).toFixed(2).replace('.', ','), statusLabel(o.status), a ? fmtDate(a) : 'Pendiente', p ? fmtDate(p) : 'Pendiente', deliveryDate(o)]);
     });
     downloadCsv(`pedidos-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   },
@@ -2082,7 +2012,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
   },
   async deleteUser(id) {
     const u = userById(id), n = db.orders.filter(o => o.userId === id).length;
-    if (!confirm(`¿Eliminar DEFINITIVAMENTE a ${u.name}?\nSe borrará su cuenta y no se puede deshacer.${n ? `\nSus ${n} pedido(s) también se eliminarán (el registro de pagos se conserva).` : ''}\n\nSi solo quieres que deje de usar la app, usa «Dar de baja».`)) return;
+    if (!confirm(`¿Eliminar DEFINITIVAMENTE a ${u.name}?\nSe borrará su cuenta y no se puede deshacer.${n ? `\nSus ${n} pedido(s) también se eliminarán.` : ''}\n\nSi solo quieres que deje de usar la app, usa «Dar de baja».`)) return;
     const { error } = await sb.rpc('admin_delete_user', { p_id: id });
     if (error) return toast(error.message, 'error');
     await fetchAll(); render(); toast('Usuario eliminado definitivamente', 'info');
@@ -2096,37 +2026,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     db.settings.currency = f.currency;
     save(); render(); toast('Ajustes guardados');
   },
-  // --- PayPal ---
-  async loadPaypalStatus() {
-    const { data } = await sb.rpc('admin_secret_status');
-    ui.paypalSecret = (data || []).find(x => x.key === 'paypal_secret') || { hint: null };
-    if (ui.tab === 'ajustes') render();
-  },
-  async savePaypal(form) {
-    const f = Object.fromEntries(new FormData(form)), b = form.querySelector('button:not([type=button])');
-    const clientId = (f.paypalClientId || '').replace(/\s+/g, ''), secret = (f.paypalSecret || '').replace(/\s+/g, '');
-    if (!clientId) return toast('Pega el Client ID de PayPal', 'error');
-    if (!secret && !ui.paypalSecret?.hint) return toast('Pega el Secret de PayPal', 'error');
-    b.disabled = true; b.textContent = 'Guardando…';
-    db.settings.paypalClientId = clientId; db.settings.paypalEnv = f.paypalEnv === 'sandbox' ? 'sandbox' : 'live';
-    save(); await syncChain;
-    if (secret) {
-      const { error } = await sb.rpc('admin_set_secret', { p_key: 'paypal_secret', p_value: secret });
-      if (error) { b.disabled = false; b.textContent = 'Guardar datos de PayPal'; return toast(error.message, 'error'); }
-    }
-    paypalLoadedFor = null; // el SDK se recarga con el Client ID nuevo
-    await App.loadPaypalStatus();
-    toast('Datos de PayPal guardados. Pulsa «Probar conexión» para comprobarlos.');
-  },
-  async testPaypal(b) {
-    b.disabled = true; b.textContent = 'Comprobando…';
-    const { data, error } = await sb.functions.invoke('paypal', { body: { action: 'check' } });
-    let detail = null;
-    if (error) { try { detail = await error.context?.json(); } catch {} }
-    b.disabled = false; b.textContent = 'Probar conexión';
-    if (!error && data?.ok) return toast(`Conexión correcta con PayPal (${data.mode === 'real' ? 'cobros reales' : 'modo pruebas'}). Ya se puede pagar.`);
-    toast(detail?.error || error?.message || 'No se pudo comprobar', 'error');
-  },
+
 };
 window.App = App;
 

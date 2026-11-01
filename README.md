@@ -60,3 +60,8 @@ Cada día (pg_cron, 07:00 UTC) se proponen para baja los usuarios sin pedidos en
 ## Ofertas
 
 En Modelos, el botón **Oferta** (debajo de Editar) activa o desactiva una oferta por modelo: **descuento %**, **por unidades** (lleva N y paga M, p. ej. 3x2) o **tiempo limitado** (descuento con cuenta atrás en días u horas, que se desactiva sola al terminar). En el catálogo los modelos en oferta salen los primeros, con una etiqueta sobre la foto y el precio rebajado. Cada pedido guarda la oferta con la que se hizo, así que su precio no cambia después.
+
+## Pagos con PayPal (reales)
+
+- El usuario paga con su cuenta PayPal o con tarjeta. El **servidor** (Edge Function `supabase/functions/paypal`) crea el cobro con el importe calculado a partir del pedido (ofertas incluidas) y lo confirma con PayPal; solo entonces el pedido pasa a **Pagado**, se registra el pago (cuenta PayPal, transacción) y se avisa a los administradores.
+- Configuración: **Client ID Live** en Ajustes de la app y **Secret Live** en Supabase → Edge Functions → Secrets como `PAYPAL_SECRET`. Ambos salen de developer.paypal.com → Apps & Credentials → Live (requiere cuenta PayPal Business).

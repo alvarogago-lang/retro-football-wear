@@ -1138,8 +1138,8 @@ function renderSettings() {
           <p class="text-sm text-slate-600">Por email: siempre disponible.</p>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="smsEnabled" class="accent-brand-600 w-4 h-4" ${s.smsEnabled ? 'checked' : ''}> También por SMS a los usuarios con teléfono</label>
           <p class="text-xs text-slate-400">El SMS necesita un proveedor (Twilio, Vonage…) configurado en Supabase → Authentication → Sign In / Providers → Phone. Actívalo aquí solo cuando esté listo.</p></fieldset>
-        <div><label class="text-xs font-semibold text-slate-600">PayPal Client ID (Sandbox)</label><input name="paypalClientId" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId)}" placeholder="Vacío = pago simulado">
-          <p class="text-xs text-slate-500 mt-1">Con un Client ID de <b>sandbox</b> (developer.paypal.com) se usan los botones reales de PayPal en modo pruebas. Sin él, el pago se simula de forma realista. En ambos casos se registra qué usuario ha pagado.</p></div>
+        <div><label class="text-xs font-semibold text-slate-600">PayPal Client ID (Live)</label><input name="paypalClientId" class="${input} mt-1 font-mono text-xs" value="${esc(s.paypalClientId)}" placeholder="Vacío = pago online desactivado">
+          <p class="text-xs text-slate-500 mt-1">Client ID de la app <b>Live</b> de la cuenta PayPal Business (developer.paypal.com → Apps &amp; Credentials → Live). El <b>Secret</b> no va aquí: se guarda en Supabase como <code>PAYPAL_SECRET</code>. Sin Client ID, los usuarios verán que el pago online aún no está activado.</p></div>
         <button class="${btnP}">Guardar ajustes</button>
       </form>
       <div class="bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3">
@@ -1210,7 +1210,7 @@ function loadPaypalSdk(clientId, currency) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.id = 'paypal-sdk';
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${currency}&intent=capture&disable-funding=card,credit`;
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${currency}&intent=capture&components=buttons&enable-funding=card`;
     s.onload = () => { paypalLoadedFor = key; resolve(); };
     s.onerror = () => reject(new Error('No se pudo cargar el SDK de PayPal'));
     document.head.appendChild(s);
@@ -1670,52 +1670,52 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     if (!o || o.status === 'pagado' || !confirm('¿Cancelar este pedido?')) return;
     db.orders = db.orders.filter(x => x.id !== oid); delete ui.sel[o.modelId]; save(); render(); toast('Pedido cancelado', 'info');
   },
+  // Pago real: el servidor (Edge Function paypal) crea el cobro con el importe del pedido y lo confirma con PayPal.
   async pay(oid) {
-    const o = db.orders.find(x => x.id === oid), u = me(), m = modelById(o.modelId);
-    const cid = db.settings.paypalClientId.trim();
+    const o = db.orders.find(x => x.id === oid), m = modelById(o.modelId);
+    const cid = (db.settings.paypalClientId || '').trim();
     openModal(`
-      <div class="flex items-center px-5 py-4 border-b border-slate-100"><div class="text-2xl flex-1">${paypalLogo}</div><span class="text-xs text-slate-400 mr-3">${cid ? 'Sandbox' : 'Simulación'}</span><button onclick="App.closeModal()" class="text-slate-400">${ic.x}</button></div>
-      <div class="p-5" id="pp-body">
+      <div class="flex items-center px-5 py-4 border-b border-slate-100"><div class="text-2xl flex-1">${paypalLogo}</div><button onclick="App.closeModal()" class="text-slate-400" aria-label="Cerrar">${ic.x}</button></div>
+      <div class="p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]" id="pp-body">
         <div class="flex gap-3 items-center bg-slate-50 rounded-2xl p-3 mb-4">
           <div class="w-12 h-14 rounded-lg overflow-hidden bg-white">${imgTag(m?.images[0] || fallbackFor(m), m, 'w-full h-full object-cover')}</div>
-          <div class="flex-1"><div class="font-semibold text-sm">${esc(o.modelName)}</div><div class="mt-0.5">${sizeChips(o.items)}</div></div>
+          <div class="flex-1"><div class="font-semibold text-sm">${esc(o.modelName)}</div><div class="mt-0.5">${sizeChips(o.items)}</div>${o.offer ? `<div class="text-xs text-brand-700 font-semibold mt-0.5">🏷 ${offerShort(o.offer)}</div>` : ''}</div>
           <div class="text-right"><div class="text-xs text-slate-500">Total</div><div class="font-bold text-lg">${money(orderTotal(o))}</div></div>
         </div>
-        ${cid ? `<div id="pp-buttons" class="min-h-[50px]"><p class="text-sm text-slate-500 text-center py-4">Cargando PayPal…</p></div>`
-              : `<div class="space-y-3">
-                  <div><label class="text-xs font-semibold text-slate-600">Cuenta PayPal</label><input id="pp-email" type="email" class="${input} mt-1" value="${esc(u.email)}"></div>
-                  <p class="text-xs text-slate-500">Pago simulado: no se realiza ningún cargo real. Se registrará que <b>${esc(u.name)}</b> ha pagado este pedido.</p>
-                  <button id="pp-go" class="w-full rounded-full bg-[#ffc439] hover:bg-[#f2b72f] py-3 text-lg font-bold" onclick="App.simulatePay('${o.id}')">Pagar con ${paypalLogo}</button>
-                </div>`}
+        ${cid ? `<div id="pp-buttons" class="min-h-[50px]"><p class="text-sm text-slate-500 text-center py-4">Cargando PayPal…</p></div>
+                 <p class="text-xs text-slate-400 text-center mt-2">Puedes pagar con tu cuenta PayPal o con tarjeta. El pago es seguro y lo procesa PayPal.</p>`
+              : `<p class="text-sm text-slate-600 text-center py-4">El pago online todavía no está activado. Si quieres pagar ya, escríbenos desde la pestaña <b>Contacto</b>.</p>`}
       </div>`);
     if (!cid) return;
+    const fail = (msg) => { const el = document.getElementById('pp-buttons'); if (el) el.innerHTML = `<p class="text-sm text-rose-600 text-center py-4">${esc(msg)}</p>`; };
+    const callPaypal = async (payload) => {
+      const { data, error } = await sb.functions.invoke('paypal', { body: payload });
+      if (!error) return data;
+      let detail = null;
+      try { detail = await error.context?.json(); } catch {}
+      throw new Error(detail?.error || error.message);
+    };
     try {
-      await loadPaypalSdk(cid, db.settings.currency);
+      await loadPaypalSdk(cid, db.settings.currency || 'EUR');
       document.getElementById('pp-buttons').innerHTML = '';
       window.paypal.Buttons({
         style: { layout: 'vertical', shape: 'pill', label: 'pay' },
-        createOrder: (_, actions) => actions.order.create({ purchase_units: [{ reference_id: o.id, description: `${o.modelName} (${Object.entries(o.items).map(([k, v]) => k + 'x' + v).join(', ')})`.slice(0, 127), custom_id: u.id, amount: { currency_code: db.settings.currency, value: orderTotal(o).toFixed(2) } }] }),
-        onApprove: async (_, actions) => {
-          const det = await actions.order.capture();
-          const cap = det.purchase_units?.[0]?.payments?.captures?.[0];
-          registerPayment(o.id, { txId: cap?.id || det.id, method: 'PayPal Sandbox', payerEmail: det.payer?.email_address, payerId: det.payer?.payer_id, payerName: [det.payer?.name?.given_name, det.payer?.name?.surname].filter(Boolean).join(' ') });
-          paySuccess(o, cap?.id || det.id);
+        createOrder: async () => (await callPaypal({ action: 'create', orderId: o.id })).id,
+        onApprove: async (data) => {
+          const box = document.getElementById('pp-buttons');
+          if (box) box.innerHTML = '<p class="text-sm text-slate-500 text-center py-4">Confirmando el pago…</p>';
+          try {
+            const r = await callPaypal({ action: 'capture', orderId: o.id, paypalOrderId: data.orderID });
+            await fetchAll();
+            paySuccess(db.orders.find(x => x.id === o.id) || o, r.payment?.txId || data.orderID);
+          } catch (e) { fail(e.message); }
         },
-        onError: (err) => { console.error(err); toast('PayPal devolvió un error. Revisa el Client ID.', 'error'); },
+        onCancel: () => toast('Pago cancelado', 'info'),
+        onError: (err) => { console.error(err); fail(err?.message || 'PayPal no ha podido completar el pago. Inténtalo de nuevo.'); },
       }).render('#pp-buttons');
     } catch (e) {
-      document.getElementById('pp-buttons').innerHTML = `<p class="text-sm text-rose-600 text-center py-4">${esc(e.message)}. Comprueba el Client ID en Ajustes o déjalo vacío para usar la simulación.</p>`;
+      fail(e.message + '. Comprueba el Client ID de PayPal en Ajustes.');
     }
-  },
-  simulatePay(oid) {
-    const email = document.getElementById('pp-email').value.trim();
-    if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Introduce un email de PayPal válido', 'error');
-    const b = document.getElementById('pp-go'); b.disabled = true; b.innerHTML = 'Procesando pago…';
-    setTimeout(() => {
-      const txId = 'SIM-' + Math.random().toString(36).slice(2, 12).toUpperCase();
-      registerPayment(oid, { txId, method: 'PayPal (simulado)', payerEmail: email });
-      paySuccess(db.orders.find(x => x.id === oid), txId);
-    }, 1300);
   },
 
   // --- admin: panel / pedidos ---

@@ -754,7 +754,9 @@ function dataTable(key, cols, rows, emptyText, minWidth = 760) {
   const st = tableState(key);
   const filtered = rows.filter(r => cols.every(c => {
     const v = (st.f[c.key] || '').trim().toLowerCase();
-    return !v || String(c.text(r) ?? '').toLowerCase().includes(v);
+    if (!v) return true;
+    if (c.options) return c.match ? c.match(r, st.f[c.key]) : String(c.text(r) ?? '') === st.f[c.key];
+    return String(c.text(r) ?? '').toLowerCase().includes(v);
   }));
   const sc = st.sort && cols.find(c => c.key === st.sort.key && c.sort);
   if (sc) filtered.sort((a, b) => { const x = sc.sort(a), y = sc.sort(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.sort.dir === 'asc' ? 1 : -1); });
@@ -770,7 +772,7 @@ function dataTable(key, cols, rows, emptyText, minWidth = 760) {
             <tr>${cols.map(c => `<th class="text-left px-3 py-2 font-semibold whitespace-nowrap ${c.cls || ''}">${c.sort
               ? `<button type="button" onclick="App.tsort('${key}','${c.key}')" class="inline-flex items-center gap-1 hover:text-brand-700 ${st.sort?.key === c.key ? 'text-brand-700' : ''}" title="Ordenar de mayor a menor / de menor a mayor">${c.label}<span class="text-[10px]">${st.sort?.key === c.key ? (st.sort.dir === 'asc' ? '▲' : '▼') : '⇅'}</span></button>`
               : c.label}</th>`).join('')}</tr>
-            <tr>${cols.map(c => `<th class="px-2 pb-2 font-normal">${c.noFilter ? '' : `<input id="tf-${key}-${c.key}" value="${esc(st.f[c.key] || '')}" oninput="App.tf('${key}','${c.key}',this.value)" placeholder="Filtrar" class="w-full min-w-[70px] rounded-lg border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500 px-2 py-1 text-xs bg-white">`}</th>`).join('')}</tr>
+            <tr>${cols.map(c => `<th class="px-2 pb-2 font-normal">${c.noFilter ? '' : c.options ? `<select onchange="App.tf('${key}','${c.key}',this.value,true)" class="w-full min-w-[80px] rounded-lg border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500 px-1.5 py-1 text-xs bg-white"><option value="">Todos</option>${c.options.map(o => `<option ${st.f[c.key] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>` : `<input id="tf-${key}-${c.key}" value="${esc(st.f[c.key] || '')}" oninput="App.tf('${key}','${c.key}',this.value)" placeholder="Filtrar" class="w-full min-w-[70px] rounded-lg border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500 px-2 py-1 text-xs bg-white">`}</th>`).join('')}</tr>
           </thead>
           <tbody>${slice.map(r => `<tr class="border-t border-slate-100 align-top">${cols.map(c => `<td class="px-3 py-2.5 ${c.cls || ''}">${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('')}</tr>`).join('')
             || `<tr><td colspan="${cols.length}" class="px-4 py-8 text-center text-slate-400">${hasFilter ? 'Nada coincide con los filtros.' : emptyText}</td></tr>`}</tbody>
@@ -806,8 +808,9 @@ function renderOrders() {
   const orderCols = [
     { key: 'fecha', label: 'Fecha', text: o => fmtDate(o.createdAt), sort: o => o.createdAt || '', cls: 'whitespace-nowrap' },
     { key: 'usuario', label: 'Usuario', text: o => userById(o.userId)?.name || 'Usuario borrado', html: o => `<span class="font-semibold">${esc(userById(o.userId)?.name || 'Usuario borrado')}</span>` },
-    { key: 'modelo', label: 'Modelo', text: o => modelById(o.modelId)?.name || o.modelName, html: o => { const m = modelById(o.modelId); return esc(m?.name || o.modelName) + (m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''); } },
-    { key: 'tallas', label: 'Tallas', text: o => itemsText(o.items), html: o => sizeChips(o.items) },
+    { key: 'tipo', label: 'Tipo', text: o => catName(catOf(modelById(o.modelId))), options: [...new Set(db.orders.map(o => catName(catOf(modelById(o.modelId)))))].sort(), html: o => catTag(modelById(o.modelId) || {}) },
+    { key: 'modelo', label: 'Modelo', options: [...new Set(db.orders.map(o => modelById(o.modelId)?.name || o.modelName))].sort(), text: o => modelById(o.modelId)?.name || o.modelName, html: o => { const m = modelById(o.modelId); return esc(m?.name || o.modelName) + (m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''); } },
+    { key: 'tallas', label: 'Tallas', options: SIZES.filter(s => db.orders.some(o => o.items?.[s])), match: (o, s) => (o.items?.[s] || 0) > 0, text: o => itemsText(o.items), html: o => sizeChips(o.items) },
     { key: 'importe', label: 'Importe', text: o => money(orderTotal(o)), sort: o => orderTotal(o), cls: 'text-right whitespace-nowrap', html: o => `<b>${money(orderTotal(o))}</b>` },
     { key: 'estado', label: 'Estado', text: o => o.status + (o.confirmation ? ' confirmado' : ''), html: o => `<div class="flex flex-col items-start gap-1">${badge(o.status)}${confirmChip(o)}</div>` },
     { key: 'pago', label: 'Pago registrado', text: o => o.payment ? `${userById(o.payment.paidByUserId)?.name || o.payment.payerName} ${paypalAccount(o.payment)} ${o.payment.txId}` : '',
@@ -867,7 +870,7 @@ function renderOrders() {
       <div class="flex-1"><h1 class="text-2xl font-bold">Pedidos</h1><p class="text-sm text-slate-500">Pedidos, actividad de cada usuario y pagos recibidos.</p></div>
       <button class="${btnS}" onclick="App.exportOrders()">${ic.dl} Exportar CSV</button>
     </div>
-    ${section('Pedidos activos', `${filteredOrders().length} pedidos`, ordersFilters + dataTable('orders', orderCols, filteredOrders(), 'No hay pedidos.', 980))}
+    ${section('Pedidos activos', `${filteredOrders().length} pedidos`, ordersFilters + dataTable('orders', orderCols, filteredOrders(), 'No hay pedidos.', 1080))}
     ${section('Pedidos por usuario', 'último mes y últimos 6 meses', dataTable('byuser', userCols, stats, 'No hay usuarios.', 640))}
     ${section('Registro de pagos', `${pays.length} pagos`, payFilters + dataTable('payments', payCols, pays, 'Sin pagos todavía.', 820))}`;
 }
@@ -1815,8 +1818,9 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     render();
     if (k === 'q') { const el = document.getElementById('f-q'); el.focus(); el.setSelectionRange(v.length, v.length); }
   },
-  tf(key, col, v) {
+  tf(key, col, v, isSelect) {
     const st = tableState(key); st.f[col] = v; st.page = 0; render();
+    if (isSelect) return;
     const el = document.getElementById(`tf-${key}-${col}`); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); }
   },
   tpage(key, d) { tableState(key).page += d; render(); },

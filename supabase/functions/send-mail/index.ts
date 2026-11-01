@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
     if (!me?.active || me.pending) return json({ error: 'Tu cuenta no está activa' }, 403);
     const isAdmin = me.role === 'admin';
 
-    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = env('SMTP_PASS');
+    const from = env('MAIL_SENDER') || 'laprimamery@gmail.com', pass = env('SMTP_PASS').replace(/s+/g, ''); // Google la muestra en grupos de 4: se quitan espacios y saltos de línea
     if (!pass) return json({ error: 'El correo de la app aún no está configurado.', notConfigured: true }, 503);
     const transport = nodemailer.createTransport({
       host: env('SMTP_HOST') || 'smtp.gmail.com', port: Number(env('SMTP_PORT') || 465), secure: true,
@@ -127,6 +127,6 @@ Deno.serve(async (req) => {
     return json({ error: 'Tipo de envío no válido' }, 400);
   } catch (e) {
     const msg = String((e as Error)?.message ?? e);
-    return json({ error: /Invalid login|535|auth/i.test(msg) ? 'Gmail ha rechazado el acceso: revisa la contraseña de aplicación (SMTP_PASS).' : msg }, 500);
+    return json({ error: /Invalid login|535|Username and Password not accepted|BadCredentials/i.test(msg) ? `Gmail ha rechazado la contraseña de aplicación (SMTP_PASS). Detalle: ${msg.slice(0, 160)}` : msg }, 500);
   }
 });

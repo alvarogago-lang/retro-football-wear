@@ -79,7 +79,7 @@ const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], paym
 let db = emptyDb();
 let synced = {}; // copia de lo último leído/escrito en la nube, para enviar solo los cambios
 
-const profileToUser = (p) => ({ id: p.id, name: p.name, username: p.username, email: p.email, phone: p.phone || '', role: p.role, active: p.active, needsPassword: p.needs_password, pending: !!p.pending, createdAt: p.created_at });
+const profileToUser = (p) => ({ id: p.id, name: p.name, username: p.username, email: p.email, phone: p.phone || '', role: p.role, active: p.active, needsPassword: p.needs_password, pending: !!p.pending, inactiveFlagAt: p.inactive_flag_at, createdAt: p.created_at });
 
 async function fetchAll() {
   const [pr, st, ...rest] = await Promise.all([
@@ -167,7 +167,7 @@ async function uploadPhoto(dataUrl) {
 }
 
 // ---------- estado de interfaz ----------
-const ui = { sessionId: null, loading: false, tab: null, sel: {}, filters: { model: '', status: '', q: '', cat: '' }, panelPaidOnly: false, draft: null, cat: '', modelCat: '', panelCat: '' };
+const ui = { sessionId: null, loading: false, tab: null, sel: {}, filters: { model: '', status: '', q: '', cat: '', from: '', to: '', pfrom: '', pto: '', puser: '' }, tables: {}, panelPaidOnly: false, draft: null, cat: '', modelCat: '', panelCat: '' };
 const me = () => db.users.find(u => u.id === ui.sessionId && u.active);
 const NO_CAT = '_none';
 const catOf = (m) => db.categories.some(c => c.id === m?.categoryId) ? m.categoryId : NO_CAT;
@@ -374,6 +374,27 @@ function pendingRequests() {
           <button class="${btnD}" onclick="App.rejectUser('${u.id}')">Rechazar</button>
         </div>
       </div>`).join('')}</div>
+  </section>`;
+}
+// --- propuestas de baja por inactividad (las marca la revisión diaria de la base de datos) ---
+function inactivityProposals() {
+  const list = db.users.filter(u => u.inactiveFlagAt && u.active && !u.pending);
+  if (!list.length) return '';
+  const lastOrder = (id) => db.orders.filter(o => o.userId === id).map(o => o.createdAt).sort().pop();
+  return `<section class="mb-6 rounded-2xl ring-1 ring-amber-300 bg-amber-50/60 p-4">
+    <h2 class="font-serif font-bold text-lg text-brand-700">Propuestas de baja <span class="ml-1 rounded-full bg-amber-500 text-white text-xs font-sans px-2 py-0.5 align-middle">${list.length}</span></h2>
+    <p class="text-sm text-slate-600 mb-3">Usuarios sin ningún pedido en los últimos 6 meses. Decide qué hacer con cada uno.</p>
+    <div class="grid gap-2.5 md:grid-cols-2">${list.map(u => { const last = lastOrder(u.id); return `
+      <div class="bg-white rounded-xl ring-1 ring-amber-200 p-3.5">
+        <div class="font-semibold">${esc(u.name)} <span class="text-sm font-normal text-slate-500">@${esc(u.username)}</span></div>
+        <div class="text-sm text-slate-600 break-all">${esc(u.email)}</div>
+        <div class="text-xs text-slate-500 mt-0.5">Último pedido: ${last ? fmtDate(last) : 'nunca'} · Propuesta el ${fmtDate(u.inactiveFlagAt)}</div>
+        <div class="flex flex-wrap gap-2 mt-3">
+          <button class="${btnP} flex-1" onclick="App.inactivity('${u.id}','baja')">Dar de baja</button>
+          <button class="${btnS} flex-1" onclick="App.inactivity('${u.id}','keep')">Mantener</button>
+          <button class="${btnD}" onclick="App.deleteUser('${u.id}')" title="Eliminar definitivamente">Eliminar</button>
+        </div>
+      </div>`; }).join('')}</div>
   </section>`;
 }
 function firstPasswordSheet(email) {
@@ -624,76 +645,126 @@ function renderPanel() {
 }
 
 // ---------- ADMIN: pedidos ----------
+// Tabla con un filtro por columna y páginas de 10 filas. El estado (página y filtros) vive en ui.tables[key].
+// cols: [{ key, label, text(row) → texto para filtrar, html(row)? → celda, cls?, noFilter? }]
+const PAGE_SIZE = 10;
+const tableState = (key) => ((ui.tables ||= {})[key] ||= { page: 0, f: {} });
+function dataTable(key, cols, rows, emptyText, minWidth = 760) {
+  const st = tableState(key);
+  const filtered = rows.filter(r => cols.every(c => {
+    const v = (st.f[c.key] || '').trim().toLowerCase();
+    return !v || String(c.text(r) ?? '').toLowerCase().includes(v);
+  }));
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (st.page >= pages) st.page = pages - 1;
+  const from = st.page * PAGE_SIZE, slice = filtered.slice(from, from + PAGE_SIZE);
+  const hasFilter = Object.values(st.f).some(v => v?.trim());
+  return `
+    <div class="bg-white rounded-2xl ring-1 ring-slate-200 overflow-hidden">
+      <div class="overflow-x-auto scroll-thin">
+        <table class="w-full text-sm" style="min-width:${minWidth}px">
+          <thead class="bg-cream-100/70 text-xs text-slate-600">
+            <tr>${cols.map(c => `<th class="text-left px-3 py-2 font-semibold whitespace-nowrap ${c.cls || ''}">${c.label}</th>`).join('')}</tr>
+            <tr>${cols.map(c => `<th class="px-2 pb-2 font-normal">${c.noFilter ? '' : `<input id="tf-${key}-${c.key}" value="${esc(st.f[c.key] || '')}" oninput="App.tf('${key}','${c.key}',this.value)" placeholder="Filtrar" class="w-full min-w-[70px] rounded-lg border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500 px-2 py-1 text-xs bg-white">`}</th>`).join('')}</tr>
+          </thead>
+          <tbody>${slice.map(r => `<tr class="border-t border-slate-100 align-top">${cols.map(c => `<td class="px-3 py-2.5 ${c.cls || ''}">${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('')}</tr>`).join('')
+            || `<tr><td colspan="${cols.length}" class="px-4 py-8 text-center text-slate-400">${hasFilter ? 'Nada coincide con los filtros.' : emptyText}</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-2 border-t border-slate-100 text-xs text-slate-500">
+        <span class="flex-1">${filtered.length ? `${from + 1}–${from + slice.length} de ${filtered.length}` : '0 resultados'}${hasFilter ? ` · <button class="font-semibold text-brand-700" onclick="App.tclear('${key}')">Quitar filtros</button>` : ''}</span>
+        <button class="${btnS} !px-2.5 !py-1" ${st.page === 0 ? 'disabled' : ''} onclick="App.tpage('${key}',-1)" aria-label="Página anterior">‹</button>
+        <span class="tabular-nums">${st.page + 1} / ${pages}</span>
+        <button class="${btnS} !px-2.5 !py-1" ${st.page >= pages - 1 ? 'disabled' : ''} onclick="App.tpage('${key}',1)" aria-label="Página siguiente">›</button>
+      </div>
+    </div>`;
+}
+const inRange = (iso, from, to) => (!from || (iso || '') >= from) && (!to || (iso || '').slice(0, 10) <= to);
+const dateInputs = (prefix, f) => `
+  <label class="flex items-center gap-1.5 text-xs text-slate-500">Desde <input type="date" class="${input} !w-auto !py-1.5" value="${esc(f.from || '')}" onchange="App.filter('${prefix}from',this.value)"></label>
+  <label class="flex items-center gap-1.5 text-xs text-slate-500">Hasta <input type="date" class="${input} !w-auto !py-1.5" value="${esc(f.to || '')}" onchange="App.filter('${prefix}to',this.value)"></label>`;
+// Cuenta PayPal del pago: titular e identificador de PayPal si el pago es real; en los simulados, la cuenta indicada.
+const paypalAccount = (p) => p.payerId ? `${p.payerName || 'PayPal'} · ID ${p.payerId}` : /simulado/i.test(p.method || '') ? `${p.payerEmail || '—'} (simulado)` : /manual/i.test(p.method || '') ? 'Pago manual' : (p.payerName || p.payerEmail || '—');
+
 function filteredOrders() {
   const f = ui.filters, q = f.q.trim().toLowerCase();
   return db.orders.filter(o => (!f.model || o.modelId === f.model) && (!f.status || o.status === f.status) && inCat(modelById(o.modelId), f.cat) &&
+    inRange(o.createdAt, f.from, f.to) &&
     (!q || (userById(o.userId)?.name || '').toLowerCase().includes(q) || (o.payment?.txId || '').toLowerCase().includes(q)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 function renderOrders() {
-  const list = filteredOrders(), f = ui.filters;
+  const f = ui.filters, now = Date.now(), DAY = 864e5;
+  const section = (title, sub, body) => `<section class="mb-8"><div class="flex items-baseline gap-2 mb-2"><h2 class="font-serif font-bold text-lg text-brand-700">${title}</h2><span class="text-xs text-slate-500">${sub}</span></div>${body}</section>`;
+
+  // 1. Pedidos activos
+  const orderCols = [
+    { key: 'fecha', label: 'Fecha', text: o => fmtDate(o.createdAt), cls: 'whitespace-nowrap' },
+    { key: 'usuario', label: 'Usuario', text: o => userById(o.userId)?.name || 'Usuario borrado', html: o => `<span class="font-semibold">${esc(userById(o.userId)?.name || 'Usuario borrado')}</span>` },
+    { key: 'modelo', label: 'Modelo', text: o => modelById(o.modelId)?.name || o.modelName, html: o => { const m = modelById(o.modelId); return esc(m?.name || o.modelName) + (m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''); } },
+    { key: 'tallas', label: 'Tallas', text: o => itemsText(o.items), html: o => sizeChips(o.items) },
+    { key: 'importe', label: 'Importe', text: o => money(orderTotal(o)), cls: 'text-right whitespace-nowrap', html: o => `<b>${money(orderTotal(o))}</b>` },
+    { key: 'estado', label: 'Estado', text: o => o.status + (o.confirmation ? ' confirmado' : ''), html: o => `<div class="flex flex-col items-start gap-1">${badge(o.status)}${confirmChip(o)}</div>` },
+    { key: 'pago', label: 'Pago registrado', text: o => o.payment ? `${userById(o.payment.paidByUserId)?.name || o.payment.payerName} ${paypalAccount(o.payment)} ${o.payment.txId}` : '',
+      html: o => { const p = o.payment; return p ? `<div class="text-xs"><div class="font-semibold text-slate-700">${esc(userById(p.paidByUserId)?.name || p.payerName)}</div><div class="text-slate-500">${esc(paypalAccount(p))}</div><div class="text-slate-400">${esc(p.txId)} · ${fmtDate(p.paidAt)}</div></div>` : '<span class="text-slate-400">—</span>'; } },
+    { key: 'acc', label: '', noFilter: true, cls: 'text-right whitespace-nowrap', text: () => '', html: o => `
+      <button class="${o.confirmation ? btnS : btnP} !px-2 !py-1 text-xs" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
+      ${o.status === 'pagado'
+        ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPending('${o.id}')">Marcar pendiente</button>`
+        : `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPaidManual('${o.id}')">Marcar pagado</button>`}
+      <button class="${btnD} !px-2 !py-1" title="Eliminar pedido" onclick="App.deleteOrder('${o.id}')">${ic.trash}</button>` },
+  ];
+  const ordersFilters = `<div class="flex flex-wrap items-center gap-2 mb-3">
+      <input class="${input} sm:!w-52 !py-1.5" placeholder="Buscar usuario o Tx…" value="${esc(f.q)}" oninput="App.filter('q',this.value)" id="f-q">
+      <select class="${input} !w-auto !py-1.5" onchange="App.filter('cat',this.value)"><option value="">Todos los tipos</option>${db.categories.map(c => `<option value="${c.id}" ${f.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <select class="${input} !w-auto !py-1.5" onchange="App.filter('model',this.value)"><option value="">Todos los modelos</option>${db.models.filter(m => inCat(m, f.cat)).map(m => `<option value="${m.id}" ${f.model === m.id ? 'selected' : ''}>${esc(m.name)}${m.deletedAt ? ' (eliminado)' : ''}</option>`).join('')}</select>
+      <select class="${input} !w-auto !py-1.5" onchange="App.filter('status',this.value)"><option value="">Todos los estados</option><option value="pagado" ${f.status === 'pagado' ? 'selected' : ''}>Pagado</option><option value="pendiente" ${f.status === 'pendiente' ? 'selected' : ''}>Pendiente</option></select>
+      ${dateInputs('', f)}
+    </div>`;
+
+  // 2. Pedidos por usuario (últimos 30 días y 6 meses)
+  const stats = db.users.filter(u => !u.pending).map(u => {
+    const os = db.orders.filter(o => o.userId === u.id), t = (o) => new Date(o.createdAt).getTime();
+    const m1 = os.filter(o => now - t(o) <= 30 * DAY), m6 = os.filter(o => now - t(o) <= 182 * DAY);
+    const last = os.map(o => o.createdAt).sort().pop();
+    return { u, m1: m1.length, m6: m6.length, amount6: m6.reduce((s, o) => s + orderTotal(o), 0), total: os.length, last };
+  }).sort((a, b) => b.amount6 - a.amount6 || b.m6 - a.m6 || a.u.name.localeCompare(b.u.name));
+  const userCols = [
+    { key: 'usuario', label: 'Usuario', text: s => `${s.u.name} @${s.u.username}`, html: s => `<div class="font-semibold">${esc(s.u.name)}</div><div class="text-xs text-slate-400">@${esc(s.u.username)}${s.u.active ? '' : ' · de baja'}</div>` },
+    { key: 'mes', label: 'Pedidos último mes', text: s => String(s.m1), cls: 'text-center' },
+    { key: 'seis', label: 'Pedidos últimos 6 meses', text: s => String(s.m6), cls: 'text-center', html: s => s.m6 ? String(s.m6) : `<span class="text-amber-600 font-semibold">0</span>` },
+    { key: 'importe', label: 'Importe 6 meses', text: s => money(s.amount6), cls: 'text-right whitespace-nowrap', html: s => `<b>${money(s.amount6)}</b>` },
+    { key: 'ultimo', label: 'Último pedido', text: s => s.last ? fmtDate(s.last) : 'nunca', cls: 'whitespace-nowrap', html: s => s.last ? fmtDate(s.last) : '<span class="text-slate-400">nunca</span>' },
+  ];
+
+  // 3. Registro de pagos
+  const pf = { from: f.pfrom, to: f.pto };
+  const pays = [...db.payments].filter(p => inRange(p.paidAt, pf.from, pf.to) && (!f.puser || p.paidByUserId === f.puser || p.userId === f.puser))
+    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  const payCols = [
+    { key: 'fecha', label: 'Fecha', text: p => fmtDate(p.paidAt), cls: 'whitespace-nowrap' },
+    { key: 'por', label: 'Pagado por', text: p => userById(p.paidByUserId)?.name || p.payerName, html: p => `<span class="font-semibold">${esc(userById(p.paidByUserId)?.name || p.payerName)}</span>` },
+    { key: 'paypal', label: 'Cuenta PayPal', text: p => paypalAccount(p) },
+    { key: 'pedido', label: 'Pedido', text: p => { const o = db.orders.find(x => x.id === p.orderId); return o ? `${o.modelName} ${itemsText(o.items)}` : 'pedido eliminado'; },
+      html: p => { const o = db.orders.find(x => x.id === p.orderId); return o ? `${esc(o.modelName)} ${sizeChips(o.items)}` : '<span class="text-slate-400">pedido eliminado</span>'; } },
+    { key: 'tx', label: 'Transacción', text: p => p.txId + (p.revoked ? ' anulado' : ''), html: p => `<span class="font-mono text-xs">${esc(p.txId)}</span>${p.revoked ? ' <span class="text-xs text-rose-500">(anulado)</span>' : ''}` },
+    { key: 'importe', label: 'Importe', text: p => money(p.amount), cls: 'text-right whitespace-nowrap', html: p => `<b>${money(p.amount)}</b>` },
+  ];
+  const payUsers = db.users.filter(u => db.payments.some(p => p.paidByUserId === u.id || p.userId === u.id));
+  const payFilters = `<div class="flex flex-wrap items-center gap-2 mb-3">
+      <select class="${input} !w-auto !py-1.5" onchange="App.filter('puser',this.value)"><option value="">Todos los usuarios</option>${payUsers.map(u => `<option value="${u.id}" ${f.puser === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+      ${dateInputs('p', pf)}
+      <span class="text-xs text-slate-500 ml-auto">Total: <b>${money(pays.filter(p => !p.revoked).reduce((s, p) => s + (p.amount || 0), 0))}</b></span>
+    </div>`;
+
   return `
-    <div class="flex flex-wrap items-end gap-3 mb-4">
-      <div class="flex-1"><h1 class="text-2xl font-bold">Pedidos</h1><p class="text-sm text-slate-500">Estado de pago y quién ha pagado cada pedido.</p></div>
+    <div class="flex flex-wrap items-end gap-3 mb-5">
+      <div class="flex-1"><h1 class="text-2xl font-bold">Pedidos</h1><p class="text-sm text-slate-500">Pedidos, actividad de cada usuario y pagos recibidos.</p></div>
       <button class="${btnS}" onclick="App.exportOrders()">${ic.dl} Exportar CSV</button>
     </div>
-    <div class="flex flex-wrap gap-2 mb-4">
-      <input class="${input} sm:!w-56" placeholder="Buscar usuario o Tx…" value="${esc(f.q)}" oninput="App.filter('q',this.value)" id="f-q">
-      <select class="${input} !w-auto flex-1 sm:flex-none" onchange="App.filter('cat',this.value)"><option value="">Todos los tipos</option>${db.categories.map(c => `<option value="${c.id}" ${f.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
-      <select class="${input} !w-auto flex-1 sm:flex-none" onchange="App.filter('model',this.value)"><option value="">Todos los modelos</option>${db.models.filter(m => inCat(m, f.cat)).map(m => `<option value="${m.id}" ${f.model === m.id ? 'selected' : ''}>${esc(m.name)}${m.deletedAt ? ' (eliminado)' : ''}</option>`).join('')}</select>
-      <select class="${input} !w-auto flex-1 sm:flex-none" onchange="App.filter('status',this.value)"><option value="">Todos los estados</option><option value="pagado" ${f.status === 'pagado' ? 'selected' : ''}>Pagado</option><option value="pendiente" ${f.status === 'pendiente' ? 'selected' : ''}>Pendiente</option></select>
-    </div>
-    <div class="md:hidden grid gap-3">
-      ${list.map(o => {
-        const u = userById(o.userId), m = modelById(o.modelId), p = o.payment;
-        return `<div class="bg-white rounded-2xl ring-1 ring-slate-200 p-4">
-          <div class="flex items-start gap-3">
-            <div class="flex-1 min-w-0"><div class="font-semibold">${esc(u?.name || 'Usuario borrado')}</div><div class="text-sm text-slate-600 truncate">${esc(m?.name || o.modelName)}</div><div class="mt-1.5">${sizeChips(o.items)}</div></div>
-            <div class="text-right"><div class="font-bold">${money(orderTotal(o))}</div><div class="mt-1">${badge(o.status)}</div></div>
-          </div>
-          ${p ? `<div class="mt-3 rounded-xl bg-pitch-50/60 px-3 py-2 text-xs text-slate-600">Pagado por <b>${esc(userById(p.paidByUserId)?.name || p.payerName)}</b> · ${esc(p.payerEmail)}<br><span class="text-slate-400">${esc(p.method)} · ${esc(p.txId)} · ${fmtDate(p.paidAt)}</span></div>` : ''}
-          ${o.confirmation ? `<div class="mt-2">${confirmChip(o)}</div>` : ''}
-          <div class="flex gap-2 mt-3">
-            <button class="${o.confirmation ? btnS : btnP} flex-1" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
-            ${o.status === 'pagado'
-              ? `<button class="${btnS} flex-1" onclick="App.markPending('${o.id}')">Marcar pendiente</button>`
-              : `<button class="${btnS} flex-1" onclick="App.markPaidManual('${o.id}')">Marcar pagado</button>`}
-            <button class="${btnD}" aria-label="Eliminar pedido" onclick="App.deleteOrder('${o.id}')">${ic.trash}</button>
-          </div></div>`;
-      }).join('') || `<p class="text-center text-slate-400 py-10">No hay pedidos con estos filtros.</p>`}
-    </div>
-    <div class="hidden md:block bg-white rounded-2xl ring-1 ring-slate-200 overflow-x-auto scroll-thin">
-      <table class="w-full text-sm min-w-[820px]">
-        <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="text-left px-4 py-2.5 font-semibold">Usuario</th><th class="text-left px-3 font-semibold">Modelo</th><th class="text-left px-3 font-semibold">Tallas</th><th class="text-right px-3 font-semibold">Importe</th><th class="text-left px-3 font-semibold">Estado</th><th class="text-left px-3 font-semibold">Pago registrado</th><th class="px-4"></th></tr></thead>
-        <tbody>
-          ${list.map(o => {
-            const u = userById(o.userId), m = modelById(o.modelId), p = o.payment;
-            return `<tr class="border-t border-slate-100 align-top">
-              <td class="px-4 py-3"><div class="font-semibold">${esc(u?.name || 'Usuario borrado')}</div><div class="text-xs text-slate-400">${fmtDate(o.createdAt)}</div></td>
-              <td class="px-3 py-3">${esc(m?.name || o.modelName)}${m?.deletedAt ? ' <span class="text-xs text-rose-500">(eliminado)</span>' : ''}</td>
-              <td class="px-3 py-3">${sizeChips(o.items)}</td>
-              <td class="px-3 py-3 text-right font-semibold">${money(orderTotal(o))}</td>
-              <td class="px-3 py-3"><div class="flex flex-col items-start gap-1">${badge(o.status)}${confirmChip(o)}</div></td>
-              <td class="px-3 py-3 text-xs">${p ? `<div class="font-semibold text-slate-700">${esc(userById(p.paidByUserId)?.name || p.payerName)}</div><div class="text-slate-500">${esc(p.payerEmail)}</div><div class="text-slate-400">${esc(p.method)} · ${esc(p.txId)}</div><div class="text-slate-400">${fmtDate(p.paidAt)}</div>` : '<span class="text-slate-400">—</span>'}</td>
-              <td class="px-4 py-3 text-right whitespace-nowrap">
-                <button class="${o.confirmation ? btnS : btnP} !px-2 !py-1 text-xs" onclick="App.confirmOrder('${o.id}')">${o.confirmation ? 'Reconfirmar' : 'Confirmar'}</button>
-                ${o.status === 'pagado'
-                  ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPending('${o.id}')">Marcar pendiente</button>`
-                  : `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.markPaidManual('${o.id}')">Marcar pagado</button>`}
-                <button class="${btnD} !px-2 !py-1" title="Eliminar pedido" onclick="App.deleteOrder('${o.id}')">${ic.trash}</button>
-              </td></tr>`;
-          }).join('') || `<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No hay pedidos con estos filtros.</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-    <h2 class="font-bold mt-8 mb-2">Registro de pagos</h2>
-    <div class="bg-white rounded-2xl ring-1 ring-slate-200 overflow-x-auto scroll-thin">
-      <table class="w-full text-xs min-w-[640px]"><thead class="bg-slate-50 text-slate-500"><tr><th class="text-left px-4 py-2 font-semibold">Fecha</th><th class="text-left px-3 font-semibold">Pagado por</th><th class="text-left px-3 font-semibold">Cuenta PayPal</th><th class="text-left px-3 font-semibold">Pedido</th><th class="text-left px-3 font-semibold">Transacción</th><th class="text-right px-4 font-semibold">Importe</th></tr></thead>
-      <tbody>${[...db.payments].sort((a, b) => b.paidAt.localeCompare(a.paidAt)).map(p => {
-        const o = db.orders.find(x => x.id === p.orderId);
-        return `<tr class="border-t border-slate-100"><td class="px-4 py-2">${fmtDate(p.paidAt)}</td><td class="px-3">${esc(userById(p.paidByUserId)?.name || p.payerName)}</td><td class="px-3">${esc(p.payerEmail)}</td><td class="px-3">${o ? `${esc(o.modelName)} ${sizeChips(o.items)}` : '<span class="text-slate-400">pedido eliminado</span>'}</td><td class="px-3 font-mono">${esc(p.txId)}${p.revoked ? ' <span class="text-rose-500">(anulado)</span>' : ''}</td><td class="px-4 text-right font-semibold">${money(p.amount)}</td></tr>`;
-      }).join('') || '<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">Sin pagos todavía.</td></tr>'}</tbody></table>
-    </div>`;
+    ${section('Pedidos activos', `${filteredOrders().length} pedidos`, ordersFilters + dataTable('orders', orderCols, filteredOrders(), 'No hay pedidos.', 980))}
+    ${section('Pedidos por usuario', 'último mes y últimos 6 meses', dataTable('byuser', userCols, stats, 'No hay usuarios.', 640))}
+    ${section('Registro de pagos', `${pays.length} pagos`, payFilters + dataTable('payments', payCols, pays, 'Sin pagos todavía.', 820))}`;
 }
 
 // ---------- ADMIN: modelos ----------
@@ -792,6 +863,7 @@ function renderUsers() {
       <button class="${btnP}" onclick="App.editUser()">${ic.plus} Nuevo usuario</button>
     </div>
     ${pendingRequests()}
+    ${inactivityProposals()}
     <div class="md:hidden grid gap-2.5">
       ${users.map(u => {
         const os = db.orders.filter(o => o.userId === u.id);
@@ -803,7 +875,7 @@ function renderUsers() {
           <div class="flex gap-2 mt-3">
             <button class="${btnS} flex-1" onclick="App.editUser('${u.id}')">${ic.edit} Editar</button>
             <button class="${btnS}" onclick="App.sendPasswordEmail('${u.id}')" title="Enviar email para crear o cambiar la contraseña" aria-label="Enviar email de contraseña">✉</button>
-            ${u.id !== ui.sessionId ? `<button class="${btnS} flex-1" onclick="App.toggleUser('${u.id}')">${u.active ? 'Desactivar' : 'Activar'}</button><button class="${btnD}" aria-label="Eliminar" onclick="App.deleteUser('${u.id}')">${ic.trash}</button>` : ''}
+            ${u.id !== ui.sessionId ? `<button class="${btnS} flex-1" onclick="App.toggleUser('${u.id}')">${u.active ? 'Dar de baja' : 'Reactivar'}</button><button class="${btnD}" aria-label="Eliminar definitivamente" title="Eliminar definitivamente" onclick="App.deleteUser('${u.id}')">${ic.trash}</button>` : ''}
           </div></div>`;
       }).join('')}
     </div>
@@ -820,8 +892,8 @@ function renderUsers() {
             <td class="px-4 py-2 text-right whitespace-nowrap">
               <button class="${btnS} !px-2 !py-1" onclick="App.editUser('${u.id}')" title="Editar">${ic.edit}</button>
               <button class="${btnS} !px-2 !py-1 text-xs" onclick="App.sendPasswordEmail('${u.id}')" title="Enviar email para crear o cambiar la contraseña">✉ Email</button>
-              ${u.id !== ui.sessionId ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.toggleUser('${u.id}')">${u.active ? 'Desactivar' : 'Activar'}</button>
-              <button class="${btnD} !px-2 !py-1" onclick="App.deleteUser('${u.id}')" title="Eliminar">${ic.trash}</button>` : ''}
+              ${u.id !== ui.sessionId ? `<button class="${btnS} !px-2 !py-1 text-xs" onclick="App.toggleUser('${u.id}')">${u.active ? 'Dar de baja' : 'Reactivar'}</button>
+              <button class="${btnD} !px-2 !py-1" onclick="App.deleteUser('${u.id}')" title="Eliminar definitivamente">${ic.trash}</button>` : ''}
             </td></tr>`;
         }).join('')}</tbody>
       </table>
@@ -936,7 +1008,7 @@ function loadPaypalSdk(clientId, currency) {
 }
 function registerPayment(orderId, info) {
   const o = db.orders.find(x => x.id === orderId), u = me();
-  o.payment = { txId: info.txId, method: info.method, payerEmail: info.payerEmail || u.email, payerName: info.payerName || u.name, paidByUserId: u.id, amount: orderTotal(o), paidAt: new Date().toISOString() };
+  o.payment = { txId: info.txId, method: info.method, payerEmail: info.payerEmail || u.email, payerName: info.payerName || u.name, payerId: info.payerId || null, paidByUserId: u.id, amount: orderTotal(o), paidAt: new Date().toISOString() };
   o.status = 'pagado'; o.updatedAt = o.payment.paidAt;
   db.payments.push({ id: uid('p'), orderId: o.id, userId: o.userId, ...o.payment });
   alertAdmins('pago', o, `Pago recibido: ${o.modelName}`, `${u.name} ha pagado su pedido de ${o.modelName} (${itemsText(o.items)}).
@@ -1156,6 +1228,16 @@ const App = {
     catch (e) { toast(`Cuenta validada, pero no se pudo enviar el email: ${e.message}. Puedes reenviarlo con ✉.`, 'error'); }
     await fetchAll(); render();
   },
+  async inactivity(id, action) {
+    const u = userById(id);
+    const msg = action === 'baja'
+      ? `¿Dar de baja a ${u.name}?\nNo podrá entrar ni pedir. Podrás reactivarlo cuando quieras.`
+      : `¿Mantener a ${u.name}?\nNo se volverá a proponer su baja durante 6 meses.`;
+    if (!confirm(msg)) return;
+    const { error } = await sb.rpc('admin_inactivity_action', { p_id: id, p_action: action });
+    if (error) return toast(error.message, 'error');
+    await fetchAll(); render(); toast(action === 'baja' ? `${u.name} dado de baja` : `${u.name} se mantiene`, 'info');
+  },
   async rejectUser(id) {
     const u = userById(id);
     if (!confirm(`¿Rechazar la solicitud de ${u.name} (@${u.username})? Se eliminará.`)) return;
@@ -1223,7 +1305,7 @@ const App = {
   readAll() { db.notifications.forEach(n => { if (n.to === ui.sessionId) n.read = true; }); save(); render(); openModal(inboxSheet()); },
   openNotif(id) {
     const n = db.notifications.find(x => x.id === id); n.read = true; save();
-    closeModal(); App.go(n.kind === 'signup' ? 'usuarios' : me().role === 'admin' ? 'pedidos' : 'mis');
+    closeModal(); App.go(n.kind === 'signup' || n.kind === 'inactive' ? 'usuarios' : me().role === 'admin' ? 'pedidos' : 'mis');
   },
   async enableSysNotif() {
     const p = await Notification.requestPermission();
@@ -1316,7 +1398,7 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
         onApprove: async (_, actions) => {
           const det = await actions.order.capture();
           const cap = det.purchase_units?.[0]?.payments?.captures?.[0];
-          registerPayment(o.id, { txId: cap?.id || det.id, method: 'PayPal Sandbox', payerEmail: det.payer?.email_address, payerName: [det.payer?.name?.given_name, det.payer?.name?.surname].filter(Boolean).join(' ') });
+          registerPayment(o.id, { txId: cap?.id || det.id, method: 'PayPal Sandbox', payerEmail: det.payer?.email_address, payerId: det.payer?.payer_id, payerName: [det.payer?.name?.given_name, det.payer?.name?.surname].filter(Boolean).join(' ') });
           paySuccess(o, cap?.id || det.id);
         },
         onError: (err) => { console.error(err); toast('PayPal devolvió un error. Revisa el Client ID.', 'error'); },
@@ -1339,9 +1421,18 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
   // --- admin: panel / pedidos ---
   setPanelPaid(v) { ui.panelPaidOnly = v; render(); },
   filter(k, v) {
-    ui.filters[k] = v; render();
+    ui.filters[k] = v;
+    if (ui.tables?.orders && ['q', 'cat', 'model', 'status', 'from', 'to'].includes(k)) ui.tables.orders.page = 0;
+    if (ui.tables?.payments && ['puser', 'pfrom', 'pto'].includes(k)) ui.tables.payments.page = 0;
+    render();
     if (k === 'q') { const el = document.getElementById('f-q'); el.focus(); el.setSelectionRange(v.length, v.length); }
   },
+  tf(key, col, v) {
+    const st = tableState(key); st.f[col] = v; st.page = 0; render();
+    const el = document.getElementById(`tf-${key}-${col}`); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); }
+  },
+  tpage(key, d) { tableState(key).page += d; render(); },
+  tclear(key) { tableState(key).f = {}; tableState(key).page = 0; render(); },
   markPaidManual(oid) {
     const o = db.orders.find(x => x.id === oid), u = userById(o.userId), admin = me();
     if (!confirm(`¿Marcar como pagado el pedido de ${u?.name}? (p. ej. pago en efectivo)`)) return;
@@ -1523,14 +1614,14 @@ Tallas: ${itemsText(items)} · ${money(orderTotal(no))} · pendiente de pago.`);
     const u = userById(id);
     const { error } = await sb.rpc('admin_save_user', { p_id: id, p_email: u.email, p_password: null, p_name: u.name, p_username: u.username, p_role: u.role, p_active: !u.active, p_phone: u.phone || null });
     if (error) return toast(error.message, 'error');
-    await fetchAll(); render(); toast(u.active ? 'Usuario desactivado' : 'Usuario activado', 'info');
+    await fetchAll(); render(); toast(u.active ? 'Usuario dado de baja: ya no puede entrar ni pedir' : 'Usuario reactivado', 'info');
   },
   async deleteUser(id) {
     const u = userById(id), n = db.orders.filter(o => o.userId === id).length;
-    if (!confirm(`¿Eliminar a ${u.name}?${n ? `\nSus ${n} pedido(s) también se eliminarán (el registro de pagos se conserva).` : ''}`)) return;
+    if (!confirm(`¿Eliminar DEFINITIVAMENTE a ${u.name}?\nSe borrará su cuenta y no se puede deshacer.${n ? `\nSus ${n} pedido(s) también se eliminarán (el registro de pagos se conserva).` : ''}\n\nSi solo quieres que deje de usar la app, usa «Dar de baja».`)) return;
     const { error } = await sb.rpc('admin_delete_user', { p_id: id });
     if (error) return toast(error.message, 'error');
-    await fetchAll(); render(); toast('Usuario eliminado', 'info');
+    await fetchAll(); render(); toast('Usuario eliminado definitivamente', 'info');
   },
 
   // --- admin: ajustes ---

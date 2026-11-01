@@ -41,7 +41,7 @@ La Edge Function `supabase/functions/notify-new-model` (envío automático con B
 - La cuenta queda **pendiente**: no puede ver el catálogo ni pedir. Los administradores reciben una notificación y la validan o rechazan en Usuarios → Solicitudes pendientes.
 - Emails: al solicitar, «Confirm sign up» (pendiente de validación + confirmar email); al validar, «Reset password» (activar y crear contraseña). Las plantillas en español están en `supabase/plantillas-email/` y solo se pueden aplicar con un SMTP propio en Supabase.
 
-Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_contrasenas.sql`, `supabase/003_solicitudes.sql`, `supabase/004_inactividad.sql`.
+Migraciones de la base de datos, en orden: `supabase/schema.sql`, `supabase/002_contrasenas.sql`, `supabase/003_solicitudes.sql`, `supabase/004_inactividad.sql`, `supabase/005_contacto.sql`.
 
 ## Pestaña Pedidos (administrador)
 
@@ -50,3 +50,9 @@ Tres tablas de 10 filas con paginación y un filtro en cada columna: **Pedidos a
 ## Bajas por inactividad
 
 Cada día (pg_cron, 07:00 UTC) se proponen para baja los usuarios sin pedidos en 6 meses: los administradores reciben una notificación (y copia en el buzón) y deciden en Usuarios → Propuestas de baja: **dar de baja**, **eliminar definitivamente** o **mantener** (no se vuelve a proponer en 6 meses). Cualquier usuario se puede dar de baja o eliminar en cualquier momento.
+
+## Contacto e invitaciones
+
+- **Usuario → pestaña Contacto:** envía consultas a los administradores y ve la conversación. **Administrador → pestaña Mensajes:** responde o marca como resuelta. Cada mensaje llega por notificación y por email.
+- **Invitar a un amigo:** email con enlace a `?registro`, que abre «Crear cuenta» (máximo 10 invitaciones al día por usuario). También se puede compartir el enlace (WhatsApp, etc.).
+- Los emails los envía la Edge Function `supabase/functions/send-mail` desde laprimamery@gmail.com por SMTP (puerto 465). Secretos: `SMTP_PASS` (contraseña de aplicación de Google), `MAIL_FROM`, `MAIL_FROM_NAME`.

@@ -65,7 +65,7 @@ const imgTag = (src, m, cls = '') =>
 const SB_URL = 'https://jyqdglmhsbuzvivxmdkp.supabase.co';
 const SB_KEY = 'sb_publishable_BRVEWF8vro8wpiT3xhVQWg_40i4Hjpc'; // clave pública: segura en el navegador gracias a RLS
 const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
-const TABLES = ['categories', 'models', 'orders', 'payments', 'notifications', 'emails'];
+const TABLES = ['categories', 'models', 'orders', 'payments', 'notifications', 'emails', 'contact'];
 
 // Preferencias de este dispositivo (aviso de instalación); si el navegador bloquea el almacenamiento, en memoria.
 function safeStore(kind) {
@@ -74,7 +74,7 @@ function safeStore(kind) {
 }
 const store = safeStore('localStorage');
 
-const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], payments: [], notifications: [], emails: [],
+const emptyDb = () => ({ users: [], categories: [], models: [], orders: [], payments: [], notifications: [], emails: [], contact: [],
   settings: { currency: 'EUR', maxUnits: 5, paypalClientId: '', alertEmail: true, alertNotif: true } });
 let db = emptyDb();
 let synced = {}; // copia de lo último leído/escrito en la nube, para enviar solo los cambios
@@ -211,6 +211,8 @@ const navIc = {
   modelos: '<path d="M8 3 3.5 5.5 2 10l3 1.2V21h14v-9.8L22 10l-1.5-4.5L16 3c-.8 1.4-2.2 2.2-4 2.2S8.8 4.4 8 3Z"/>',
   usuarios: '<path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21c0-3.9 3.1-7 7-7s7 3.1 7 7M16 3.5a4 4 0 0 1 0 7.5M18 14.5c2.4.9 4 3.2 4 6.5"/>',
   ajustes: '<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  contacto: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/>',
+  mensajes: '<path d="M4 5h16v11H8l-4 3.5z"/><path d="M8 9h8M8 12h5"/>',
   catalogo: '<path d="M8 3 3.5 5.5 2 10l3 1.2V21h14v-9.8L22 10l-1.5-4.5L16 3c-.8 1.4-2.2 2.2-4 2.2S8.8 4.4 8 3Z"/>',
   mis: '<path d="M6 7h12l-1 14H7L6 7zM9 7a3 3 0 0 1 6 0"/>',
 };
@@ -243,11 +245,11 @@ function render() {
   if (!u) { app.innerHTML = renderLogin(); return; }
   if (!ui.tab) ui.tab = u.role === 'admin' ? 'panel' : 'catalogo';
   const tabs = u.role === 'admin'
-    ? [['panel', 'Panel'], ['pedidos', 'Pedidos'], ['modelos', 'Modelos'], ['usuarios', 'Usuarios'], ['ajustes', 'Ajustes']]
-    : [['catalogo', 'Catálogo'], ['mis', 'Mis pedidos']];
+    ? [['panel', 'Panel'], ['pedidos', 'Pedidos'], ['mensajes', 'Mensajes' + countPill(unreadThreads())], ['modelos', 'Modelos'], ['usuarios', 'Usuarios'], ['ajustes', 'Ajustes']]
+    : [['catalogo', 'Catálogo'], ['mis', 'Mis pedidos'], ['contacto', 'Contacto' + countPill(unreadThreads())]];
   const body = {
     panel: renderPanel, pedidos: renderOrders, modelos: renderModels, usuarios: renderUsers, ajustes: renderSettings,
-    catalogo: renderCatalog, mis: renderMyOrders,
+    catalogo: renderCatalog, mis: renderMyOrders, contacto: renderContact, mensajes: renderMessages,
   }[ui.tab]?.() ?? '';
   const roleTag = `<span class="text-xs font-semibold rounded-full px-2 py-0.5 ${u.role === 'admin' ? 'bg-brand-50 text-brand-700' : 'bg-pitch-50 text-pitch-700'}">${u.role === 'admin' ? 'Admin' : 'Usuario'}</span>`;
   app.innerHTML = `
@@ -286,6 +288,7 @@ function profileSheet() {
       <div class="sm:hidden mx-auto w-10 h-1 rounded-full bg-slate-200 mb-4"></div>
       <div class="flex items-center gap-3 mb-4"><span class="grid place-items-center w-11 h-11 rounded-full bg-brand-600 text-white font-bold">${esc(u.name[0])}</span><div><div class="font-semibold">${esc(u.name)}</div><div class="text-xs text-slate-500">@${esc(u.username)} · ${u.role === 'admin' ? 'Administrador' : 'Usuario'}</div></div></div>
       ${canInstall() ? `<button class="${btnP} w-full !py-3 mb-3" onclick="App.showInstall()">${ic.install} Instalar app en este ${isMobile() ? 'móvil' : 'ordenador'}</button>` : ''}
+      <button class="${btnS} w-full !py-3 mb-2" onclick="App.openInvite()">✉ Invitar a un amigo</button>
       <button class="${btnS} w-full !py-3 mb-2" onclick="App.changePassword()">Cambiar mi contraseña</button>
       <button class="${btnD} w-full !py-3" onclick="App.closeModal();App.logout()">Cerrar sesión</button>
     </div>`;
@@ -767,6 +770,119 @@ function renderOrders() {
     ${section('Registro de pagos', `${pays.length} pagos`, payFilters + dataTable('payments', payCols, pays, 'Sin pagos todavía.', 820))}`;
 }
 
+// ---------- CONTACTO (usuario) y MENSAJES (administrador) ----------
+// Cada consulta es un hilo en la tabla contact; los emails los envía la Edge Function send-mail.
+async function callMail(payload) {
+  const { data, error } = await sb.functions.invoke('send-mail', { body: { ...payload, appUrl: location.origin + location.pathname } });
+  if (!error) return { ok: true, data };
+  let detail = null;
+  try { detail = await error.context?.json(); } catch {}
+  return { ok: false, notConfigured: !!detail?.notConfigured, error: detail?.error || error.message };
+}
+const mailNote = (r, okText) => r.ok ? okText : r.notConfigured ? 'Aviso enviado en la app. El email saldrá cuando esté configurado el correo de La Prima Mery.' : `Aviso enviado en la app, pero falló el email: ${r.error}`;
+const threadStatus = (t) => t.status === 'cerrada'
+  ? '<span class="rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-xs font-semibold">Resuelta</span>'
+  : t.status === 'respondida'
+    ? '<span class="rounded-full bg-pitch-50 text-pitch-700 ring-1 ring-pitch-100 px-2 py-0.5 text-xs font-semibold">Respondida</span>'
+    : '<span class="rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2 py-0.5 text-xs font-semibold">Pendiente de respuesta</span>';
+const unreadThreads = () => me()?.role === 'admin'
+  ? db.contact.filter(t => !t.readAdmin && t.status !== 'cerrada').length
+  : db.contact.filter(t => t.userId === ui.sessionId && !t.readUser).length;
+
+function threadCard(t, asAdmin) {
+  const open = ui.openThread === t.id;
+  const unread = asAdmin ? !t.readAdmin : !t.readUser;
+  const last = t.messages.at(-1);
+  return `<article class="bg-white rounded-2xl ring-1 ${unread ? 'ring-brand-500/50' : 'ring-slate-200'} overflow-hidden">
+    <button class="w-full text-left p-4 flex items-start gap-3" onclick="App.toggleThread('${t.id}')">
+      <span class="mt-1.5 w-2 h-2 rounded-full shrink-0 ${unread ? 'bg-brand-600' : 'bg-transparent'}"></span>
+      <span class="flex-1 min-w-0">
+        <span class="flex flex-wrap items-center gap-2"><span class="font-semibold">${esc(t.subject)}</span>${threadStatus(t)}</span>
+        <span class="block text-xs text-slate-500 mt-0.5">${asAdmin ? `${esc(userById(t.userId)?.name || t.userName)} · ` : ''}${t.messages.length} mensaje${t.messages.length === 1 ? '' : 's'} · ${fmtDate(t.updatedAt || t.at)}</span>
+        ${open ? '' : `<span class="block text-sm text-slate-600 mt-1 truncate">${last.from === 'admin' ? 'La Prima Mery: ' : ''}${esc(last.body)}</span>`}
+      </span>
+      <span class="text-slate-400 text-sm">${open ? '▲' : '▼'}</span>
+    </button>
+    ${open ? `<div class="px-4 pb-4 space-y-2">
+      ${t.messages.map(m => {
+        const mine = asAdmin ? m.from === 'admin' : m.from === 'user';
+        return `<div class="flex ${mine ? 'justify-end' : 'justify-start'}"><div class="max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm ${mine ? 'bg-brand-600 text-white rounded-br-md' : 'bg-cream-100 text-slate-800 rounded-bl-md'}">
+          <div class="text-[11px] font-semibold ${mine ? 'text-white/70' : 'text-gold-700'} mb-0.5">${m.from === 'admin' ? `La Prima Mery${asAdmin ? ` · ${esc(m.name)}` : ''}` : esc(m.name)} · ${fmtDate(m.at)}</div>
+          <div class="whitespace-pre-line">${esc(m.body)}</div></div></div>`;
+      }).join('')}
+      ${t.status === 'cerrada' && !asAdmin ? '<p class="text-xs text-slate-400 text-center pt-1">Esta consulta está resuelta. Si necesitas algo más, abre una nueva.</p>' : `
+      <form class="pt-2 flex flex-col gap-2" onsubmit="event.preventDefault();App.replyThread('${t.id}',this)">
+        <textarea name="body" required rows="2" maxlength="2000" class="${input}" placeholder="${asAdmin ? 'Escribe tu respuesta…' : 'Escribe un mensaje…'}"></textarea>
+        <div class="flex flex-wrap gap-2 justify-end">
+          ${asAdmin ? `<button type="button" class="${btnS}" onclick="App.closeThread('${t.id}')">${t.status === 'cerrada' ? 'Reabrir' : 'Marcar como resuelta'}</button>` : ''}
+          <button class="${btnP}">${asAdmin ? 'Responder' : 'Enviar'}</button>
+        </div>
+      </form>`}
+    </div>` : ''}
+  </article>`;
+}
+
+function renderContact() {
+  const mine = db.contact.filter(t => t.userId === ui.sessionId).sort((a, b) => (b.updatedAt || b.at).localeCompare(a.updatedAt || a.at));
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-5">
+      <div class="flex-1 min-w-[200px]"><h1 class="text-2xl font-bold">Contacto</h1><p class="text-sm text-slate-500">Escríbenos tu pregunta: te responderemos aquí y por email.</p></div>
+      <button class="${btnS} !ring-brand-600 !text-brand-700" onclick="App.openInvite()">✉ Invitar a un amigo</button>
+    </div>
+    <form class="bg-white rounded-2xl ring-1 ring-slate-200 p-4 sm:p-5 space-y-3 mb-6" onsubmit="event.preventDefault();App.sendQuestion(this)">
+      <h2 class="font-serif font-bold text-lg text-brand-700">Nueva consulta</h2>
+      <div><label class="text-xs font-semibold text-slate-600">Asunto</label><input name="subject" required maxlength="120" class="${input} mt-1" placeholder="p. ej. ¿Cuándo llega mi pedido?"></div>
+      <div><label class="text-xs font-semibold text-slate-600">Mensaje</label><textarea name="body" required rows="4" maxlength="2000" class="${input} mt-1" placeholder="Cuéntanos en qué te podemos ayudar"></textarea></div>
+      <div class="flex justify-end"><button class="${btnP}">Enviar consulta</button></div>
+    </form>
+    <h2 class="font-serif font-bold text-lg text-brand-700 mb-2">Mis consultas</h2>
+    <div class="grid gap-3">${mine.map(t => threadCard(t, false)).join('') || '<p class="text-sm text-slate-400 bg-white rounded-2xl ring-1 ring-slate-200 p-6 text-center">Todavía no has enviado ninguna consulta.</p>'}</div>`;
+}
+
+function renderMessages() {
+  const filter = ui.msgFilter || 'abiertas';
+  const all = [...db.contact].sort((a, b) => (b.updatedAt || b.at).localeCompare(a.updatedAt || a.at));
+  const list = filter === 'abiertas' ? all.filter(t => t.status !== 'cerrada') : all;
+  const chip = (k, l, n) => `<button onclick="App.msgFilter('${k}')" class="rounded-full px-3.5 py-1.5 text-sm font-semibold ring-1 ${filter === k ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200'}">${l} <span class="${filter === k ? 'text-white/60' : 'text-slate-400'}">${n}</span></button>`;
+  return `
+    <div class="flex flex-wrap items-end gap-3 mb-4">
+      <div class="flex-1"><h1 class="text-2xl font-bold">Mensajes</h1><p class="text-sm text-slate-500">Consultas de los usuarios. Tu respuesta les llega por notificación y por email.</p></div>
+    </div>
+    <div class="flex gap-2 mb-4">${chip('abiertas', 'Abiertas', all.filter(t => t.status !== 'cerrada').length)}${chip('todas', 'Todas', all.length)}</div>
+    <div class="grid gap-3">${list.map(t => threadCard(t, true)).join('') || '<p class="text-sm text-slate-400 bg-white rounded-2xl ring-1 ring-slate-200 p-6 text-center">No hay consultas.</p>'}</div>`;
+}
+
+function inviteSheet() {
+  return `<form onsubmit="event.preventDefault();App.sendInvite(this)">${sheetHead('Invitar a un amigo')}
+    <div class="p-5 space-y-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+      <p class="text-sm text-slate-600">Le enviaremos un email con un enlace para crear su cuenta en La Prima Mery.</p>
+      <div><label class="text-xs font-semibold text-slate-600">Email de tu amigo <span class="text-brand-600">*</span></label><input name="to" type="email" required autocapitalize="none" class="${input} mt-1"></div>
+      <div><label class="text-xs font-semibold text-slate-600">Su nombre (opcional)</label><input name="friendName" maxlength="60" class="${input} mt-1"></div>
+      <div><label class="text-xs font-semibold text-slate-600">Mensaje (opcional)</label><textarea name="note" rows="2" maxlength="500" class="${input} mt-1" placeholder="¡Mira las equipaciones que hay!"></textarea></div>
+      <button class="${btnP} w-full !py-2.5">Enviar invitación</button>
+      <div class="flex items-center gap-3 text-xs text-slate-400"><span class="flex-1 h-px bg-slate-200"></span>o<span class="flex-1 h-px bg-slate-200"></span></div>
+      <button type="button" class="${btnS} w-full" onclick="App.shareInvite()">Compartir el enlace (WhatsApp, etc.)</button>
+    </div></form>`;
+}
+const inviteUrl = () => location.origin + location.pathname + '?registro';
+// Avisos en la app (y copia en el buzón) del otro lado de la conversación.
+function notifyContact(t, first) {
+  const last = t.messages.at(-1), preview = last.body.length > 140 ? last.body.slice(0, 140) + '…' : last.body;
+  if (last.from === 'user') {
+    db.users.filter(a => a.role === 'admin' && a.active && !a.pending).forEach(a => {
+      sendNotif(a, `${first ? 'Nueva consulta' : 'Nuevo mensaje'} de ${last.name}: ${t.subject}`, preview, null, { kind: 'contact', threadId: t.id });
+      sendMail(a, `[${APP_NAME}] ${first ? 'Nueva consulta' : 'Nuevo mensaje'} de ${last.name}: ${t.subject}`, `${last.name} ${first ? 'ha enviado una consulta' : 'ha escrito en su consulta'} «${t.subject}»:\n\n${last.body}\n\nRespóndela en la pestaña Mensajes.`, null);
+    });
+  } else {
+    const owner = userById(t.userId);
+    if (!owner) return;
+    sendNotif(owner, `Respuesta a tu consulta: ${t.subject}`, preview, null, { kind: 'contact', threadId: t.id });
+    sendMail(owner, `[${APP_NAME}] Respuesta a tu consulta: ${t.subject}`, `Te hemos respondido a tu consulta «${t.subject}»:\n\n${last.body}\n\nPuedes ver la conversación en la pestaña Contacto.`, null);
+  }
+}
+
+const countPill = (n) => n ? ` <span class="ml-0.5 inline-grid place-items-center min-w-[18px] h-[18px] rounded-full bg-brand-600 text-white text-[10px] font-bold px-1 align-middle">${n}</span>` : '';
+
 // ---------- ADMIN: modelos ----------
 function renderModels() {
   const all = liveModels(), models = all.filter(m => inCat(m, ui.modelCat));
@@ -1043,8 +1159,8 @@ function sysNotify(title, body) {
     .then(reg => reg ? reg.showNotification(title, opts) : new Notification(title, opts))
     .catch(() => { try { new Notification(title, opts); } catch {} });
 }
-function sendNotif(user, title, body, orderId) {
-  db.notifications.push({ id: uid('n'), to: user.id, title, body, orderId, at: new Date().toISOString(), read: false });
+function sendNotif(user, title, body, orderId, extra = {}) {
+  db.notifications.push({ id: uid('n'), to: user.id, title, body, orderId, at: new Date().toISOString(), read: false, ...extra });
   if (user.id === ui.sessionId) sysNotify(title, body);
 }
 function sendMail(user, subject, body, orderId) {
@@ -1228,6 +1344,57 @@ const App = {
     catch (e) { toast(`Cuenta validada, pero no se pudo enviar el email: ${e.message}. Puedes reenviarlo con ✉.`, 'error'); }
     await fetchAll(); render();
   },
+  // --- contacto ---
+  toggleThread(id) {
+    ui.openThread = ui.openThread === id ? null : id;
+    const t = db.contact.find(x => x.id === id), admin = me().role === 'admin';
+    if (ui.openThread && t && (admin ? !t.readAdmin : !t.readUser)) { if (admin) t.readAdmin = true; else t.readUser = true; save(); }
+    render();
+  },
+  msgFilter(k) { ui.msgFilter = k; render(); },
+  async sendQuestion(form) {
+    const u = me(), now = new Date().toISOString(), b = form.querySelector('button');
+    const t = { id: uid('c'), userId: u.id, userName: u.name, subject: form.subject.value.trim(), status: 'abierta', at: now, updatedAt: now,
+      readUser: true, readAdmin: false, messages: [{ from: 'user', by: u.id, name: u.name, body: form.body.value.trim(), at: now }] };
+    b.disabled = true; b.textContent = 'Enviando…';
+    db.contact.push(t); notifyContact(t, true); save(); ui.openThread = t.id; render();
+    await syncChain;
+    const r = await callMail({ type: 'contact', threadId: t.id });
+    toast(mailNote(r, 'Consulta enviada. Te responderemos lo antes posible.'), r.ok || r.notConfigured ? 'ok' : 'error');
+  },
+  async replyThread(id, form) {
+    const u = me(), admin = u.role === 'admin', t = db.contact.find(x => x.id === id), now = new Date().toISOString();
+    t.messages.push({ from: admin ? 'admin' : 'user', by: u.id, name: u.name, body: form.body.value.trim(), at: now });
+    Object.assign(t, { updatedAt: now, status: admin ? 'respondida' : 'abierta', readAdmin: admin, readUser: !admin });
+    notifyContact(t, false);
+    save(); render();
+    await syncChain;
+    const r = await callMail({ type: admin ? 'reply' : 'contact', threadId: id });
+    toast(mailNote(r, admin ? `Respuesta enviada a ${userById(t.userId)?.name || 'el usuario'}` : 'Mensaje enviado'), r.ok || r.notConfigured ? 'ok' : 'error');
+  },
+  closeThread(id) {
+    const t = db.contact.find(x => x.id === id);
+    t.status = t.status === 'cerrada' ? (t.messages.at(-1).from === 'admin' ? 'respondida' : 'abierta') : 'cerrada';
+    t.readAdmin = true; save(); render();
+    toast(t.status === 'cerrada' ? 'Consulta marcada como resuelta' : 'Consulta reabierta', 'info');
+  },
+  openInvite() { openModal(inviteSheet()); },
+  async sendInvite(form) {
+    const b = form.querySelector('button:not([type=button])');
+    b.disabled = true; b.textContent = 'Enviando…';
+    const r = await callMail({ type: 'invite', to: form.to.value.trim(), friendName: form.friendName.value.trim(), note: form.note.value.trim() });
+    b.disabled = false; b.textContent = 'Enviar invitación';
+    if (r.ok && r.data?.alreadyUser) return toast('Esa persona ya tiene cuenta en La Prima Mery', 'info');
+    if (r.ok) { closeModal(); return toast(`Invitación enviada a ${form.to.value.trim()}`); }
+    if (r.notConfigured) return toast('El email de invitación aún no está disponible. Usa «Compartir el enlace».', 'info');
+    toast(r.error, 'error');
+  },
+  async shareInvite() {
+    const text = `${me().name} te invita a La Prima Mery: réplicas de equipaciones históricas de fútbol. Crea tu cuenta aquí:`;
+    if (navigator.share) { try { await navigator.share({ title: APP_NAME, text, url: inviteUrl() }); return; } catch (e) { if (e?.name === 'AbortError') return; } }
+    try { await navigator.clipboard.writeText(`${text} ${inviteUrl()}`); toast('Enlace copiado: pégalo donde quieras'); }
+    catch { prompt('Copia este enlace de invitación:', inviteUrl()); }
+  },
   async inactivity(id, action) {
     const u = userById(id);
     const msg = action === 'baja'
@@ -1305,6 +1472,7 @@ const App = {
   readAll() { db.notifications.forEach(n => { if (n.to === ui.sessionId) n.read = true; }); save(); render(); openModal(inboxSheet()); },
   openNotif(id) {
     const n = db.notifications.find(x => x.id === id); n.read = true; save();
+    if (n.kind === 'contact') { ui.openThread = n.threadId; closeModal(); return App.go(me().role === 'admin' ? 'mensajes' : 'contacto'); }
     closeModal(); App.go(n.kind === 'signup' || n.kind === 'inactive' ? 'usuarios' : me().role === 'admin' ? 'pedidos' : 'mis');
   },
   async enableSysNotif() {
@@ -1664,7 +1832,7 @@ sb.auth.onAuthStateChange((event) => {
   ui.loading = true; render();
   const { data: { session } } = await sb.auth.getSession();
   if (session) await enterSession(session.user.id, false);
-  else { ui.loading = false; render(); }
+  else { ui.loading = false; render(); if (new URLSearchParams(location.search).has('registro')) App.openSignup(); }
 })();
 </script>
 </body>
